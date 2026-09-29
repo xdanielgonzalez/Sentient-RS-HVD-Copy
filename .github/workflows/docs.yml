@@ -138,7 +138,7 @@ jobs:
           name: docs-site
           path: book
 
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           # Self-contained Harbor trust for the isolated buildkit builder + network.host for RUN
           # steps over the 1450-MTU pod overlay — see builder-image.yml for the full story.
