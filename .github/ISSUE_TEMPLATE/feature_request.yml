@@ -1,0 +1,54 @@
+name: "Feature request"
+description: "Propose an enhancement or new capability that isn't yet an Epic/Story (an unscoped idea)."
+title: "FEATURE: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For work that's already scoped and prioritized, file a Story or Task instead — this template
+        is for newer or unscoped ideas. A maintainer may promote this into an Epic/Story once triaged.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem or gap does this address? Who is affected?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed solution
+      description: What would you like to happen? Sketch the approach if you have one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+
+  - type: dropdown
+    id: target_platform
+    attributes:
+      label: Target platform
+      multiple: true
+      options:
+        - "Raspberry Pi (Yocto Linux / std+tokio)"
+        - "MCU (Zephyr / no_std)"
+        - "Both / shared (lib-* crate)"
+        - "Not platform-specific (tooling, docs, CI)"
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Links, references, prior art, related issues.
+    validations:
+      required: false

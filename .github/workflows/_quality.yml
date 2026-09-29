@@ -1,0 +1,116 @@
+name: _quality (reusable)
+
+# Reusable workflow: coverage, semver-checks, and MSRV. Called only via `workflow_call`.
+#
+# coverage is now a hard gate (`just coverage`, tarpaulin `--fail-under 75`; see the job comment).
+# semver is still `continue-on-error: true` — see its job comment for why it doesn't yet gate the
+# pipeline. msrv is a hard gate: it runs `cargo build` directly (not `just msrv`) because
+# `cargo +1.91` cannot resolve a toolchain that isn't installed inside a container that is already
+# pinned to rust:1.91.
+
+# No secrets: the shared setup action only wires the NFS-backed sccache env (no MinIO cache
+# creds needed since the S3 target/ cache was dropped — see .github/actions/setup).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  coverage:
+    name: coverage (tarpaulin)
+    runs-on: arc-runner-set
+    container:
+      image: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+      # cargo-tarpaulin disables ASLR via personality(ADDR_NO_RANDOMIZE) and ptraces the test binaries
+      # to collect coverage. The container's default seccomp blocks personality() -> "ASLR disable
+      # failed: EPERM: Operation not permitted". Unconfine seccomp (allow personality) + add SYS_PTRACE.
+      options: --security-opt seccomp=unconfined --cap-add SYS_PTRACE
+    timeout-minutes: 30
+    # Enforced gate: `just coverage` runs tarpaulin with `--fail-under 75` (raised from the prior
+    # 66.56% baseline by adding real tests for lib-parse/canonical.rs, impl-app/lib.rs's
+    # run/run_cycle branches, and the host-hardware-independent slice of lib-io/host.rs).
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # cargo-tarpaulin is baked into sentient-builder — no per-run cargo install.
+      - name: just coverage
+        run: just coverage
+
+      # Native step summary (no extra perms): tarpaulin's `--out Xml` writes Cobertura XML with the
+      # workspace line-rate in the root <coverage> element's `line-rate` attribute.
+      - name: Publish coverage summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          XML="cobertura.xml"
+          {
+            echo "## coverage (tarpaulin) results"
+            echo
+            if [ -f "$XML" ]; then
+              LINE_RATE=$(grep -m1 -oE 'line-rate="[0-9.]+"' "$XML" | grep -oE '[0-9.]+')
+              PCT=$(awk -v r="$LINE_RATE" 'BEGIN { printf "%.2f", r * 100 }')
+              echo "Line coverage: **${PCT}%** (gate: fail-under 75%)"
+            else
+              echo "_no cobertura.xml produced (job likely failed before tarpaulin completed)_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  semver:
+    name: semver-checks
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 20
+    # v0.1.0 has no published baseline yet, so there is nothing to diff against — don't gate on it
+    # until a released version exists to compare future changes to.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # cargo-semver-checks is baked into sentient-builder — no per-run cargo install.
+      - name: just semver
+        run: just semver
+
+  # NOT rewired onto sentient-builder: this job already has zero per-run tool installs to bake away
+  # (no rust-components/rust-target, install-just already "false", plain `cargo build`), and its
+  # whole point is a container with ONLY the 1.91 toolchain — no cargo-installed CI tools, no
+  # rustup targets/components beyond default — so `cargo build` (undecorated, no `+1.91`) resolves
+  # unambiguously. sentient-builder is also single-toolchain 1.91 today, but staying on the plain
+  # upstream image keeps this gate's isolation from the builder image's tool set explicit rather
+  # than incidental. The setup action installs the pinned sccache release binary here (the plain
+  # rust:1.91 image ships none), so this lane shares the NFS compiler cache like every other lane
+  # instead of cold-compiling the whole workspace each run — sccache is a compiler WRAPPER, not a
+  # toolchain component, so the 1.91-only isolation this job exists for is unchanged.
+  msrv:
+    name: MSRV (1.91)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/docker-hub/library/rust:1.91
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # `just msrv` runs `cargo +1.91 build ...`, but this container's toolchain IS 1.91 with no
+      # other toolchains installed — `cargo +1.91` has nothing to resolve to. Build directly.
+      # (1.91 is the true floor: smoltcp 0.13.1 requires rustc 1.91 (heapless 1.87, time 1.88, icu 1.86).)
+      - name: cargo build --workspace (MSRV)
+        run: cargo build --locked --workspace

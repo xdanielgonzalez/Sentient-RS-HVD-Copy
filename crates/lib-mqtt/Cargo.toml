@@ -1,0 +1,34 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "lib-mqtt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Embedded rumqttd MQTT server hosting the device's TMS data; an external mosquitto bridge subscribes to it and relays to the cloud. Publish onto the broker via the in-process Link."
+
+[dependencies]
+lib-parse = { workspace = true, default-features = true }
+lib-mapping = { workspace = true, default-features = true }
+# The broker-side CONNECT authorizer routes through this seam (`TokenVerifier`) — never a
+# hardcoded credential. `default-features = true` pulls in the `std` feature (host-only), matching
+# this crate's own std-only build.
+lib-security = { workspace = true, default-features = true }
+rumqttd = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+# `lib-mqtt/tests/broker_health.rs` uses `test_kit::start_broker`; the cross-crate e2e
+# tests (mqtt_e2e, e2e_l1, broker_auth, broker_roundtrip, token_auth_software) moved to
+# `test-e2e` in #99, along with the old `tests/support/` module they and broker_health.rs used.
+test-kit = { workspace = true }
+heapless = { workspace = true }
+# Test-only: parse the published JSON back to assert on it (publish.rs).
+serde_json = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,54 @@
+name: Image (golden Yocto build)
+
+# Rebuild the BASE (app-free, post sysext-split) Pi OS image and publish it: the qemuarm64 GOLDEN
+# prebuilt bundle as the dated pre-release that uat.yml consumes, AND the raspberrypi5/raspberrypi4-64
+# SHIPPING bases, CMS-signed and staged to the MinIO golden store that production.yml pulls from at
+# release time instead of rebuilding. PATH-FILTERED: the heavy `kas build` runs ONLY when the image
+# inputs change — distro/** (layers, recipes, kas manifest), the yocto builder Dockerfile, or the
+# build workflow itself. A normal code merge changes only bin-rpi/the app sysext, which never touches
+# this base image anymore (the app ships as a separate signed systemd-sysext extension built by
+# production.yml), so there is nothing to rebuild here on those merges. Also dispatchable on demand
+# (e.g. to mint the first golden image, or refresh after a base-layer bump that isn't reflected in a
+# tracked file).
+#
+# Delegates to _yocto.yml, which BUILDS ONLY, per MACHINE: `kas build sentient-image` -> stage deploy
+# dir / sign (shipping machines) -> publish the dated pre-release (qemuarm64) / stage the signed base
+# to MinIO golden (shipping machines). It does NOT boot or test the image — boot/preflight/Robot e2e
+# all live in uat.yml (against the freshly-built bin-rpi). Future image-level gates (security scans,
+# compliance/SBOM) would attach in _yocto.yml, not here.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'distro/**'
+      # ...but NOT documentation under distro/. A markdown edit cannot change a single BitBake input,
+      # yet `distro/**` matched `distro/README.md` on the MCU-rename merge (#411) and kicked off a
+      # 5h21m golden-image rebuild for nothing. Negative patterns are evaluated in order, so this must
+      # stay AFTER the positive `distro/**` above.
+      - '!distro/**/*.md'
+      - '.ci/yocto.Dockerfile'
+      - '.github/workflows/_yocto.yml'
+      - '.github/workflows/image.yml'
+  workflow_dispatch:
+
+# Serialize golden builds on main; do not cancel-in-progress (a running build may be mid-publish of
+# its dated pre-release).
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  golden:
+    name: base image (golden + shipping)
+    # _yocto.yml's build-image job publishes the dated pre-release (softprops, qemuarm64 leg only) —
+    # grant contents: write here so the reusable workflow's GITHUB_TOKEN can create it. The shipping
+    # legs (raspberrypi5/raspberrypi4-64) only stage to MinIO (secrets, not contents), so this same
+    # permission is a superset that covers both without a separate job.
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_yocto.yml
+    secrets: inherit

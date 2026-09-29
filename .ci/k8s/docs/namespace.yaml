@@ -1,0 +1,5 @@
+# The docs-site namespace — one nginx+tailscale pod serving the rendered mdbook onto the tailnet.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: docs

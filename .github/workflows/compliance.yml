@@ -1,0 +1,132 @@
+name: compliance
+
+# TMS (MIL-STD-3071) compliance gate: conftest/OPA policies (compliance/policy/*.rego) over
+# docs/compliance/tms/tms-coverage.json — the tms-idl-codegen descriptor factory's generated
+# type/topic catalogue — plus the OSCAL catalog/component-definition and attestation generator
+# under compliance/ and tools/tms-attest/.
+#
+# Entirely independent of the Rust build: NO cargo, NO sentient-builder container. A plain
+# ubuntu-latest runner with two pinned prebuilt binaries (just, conftest — curl + sha256, per this
+# repo's "prefer pinned prebuilt binaries in CI" convention) and stdlib-only Python 3
+# (tools/tms-attest/generate_report.py has zero third-party dependencies). trestle (pip) is
+# deliberately NOT installed here — it is only needed to re-author/validate compliance/oscal/*.json
+# by hand, not to run this gate; see that directory's own header comments for the trestle command.
+#
+# New workflow file, file-disjoint from the parallel Rust workstreams: this job only reads the
+# already-generated docs/compliance/tms/tms-coverage.json and files under compliance/,
+# tools/tms-attest/, and this workflow file itself — it does not edit any existing job/workflow.
+#
+# Mirrors the security-gate artifact-upload pattern in _supply-chain.yml: gate step (conftest exit
+# code decides red/green) -> `if: always()` evidence generation -> upload-artifact -> step summary.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/compliance/tms/**"
+      - "compliance/**"
+      - "tools/tms-attest/**"
+      - "justfile"
+      - ".github/workflows/compliance.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: compliance-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  JUST_VERSION: "1.56.0"
+  JUST_SHA256: "fa2a8ec1015d9df5330941ade12437488fc40d33f9c9f8cd4eb70a26de11b639"
+  CONFTEST_VERSION: "0.68.2"
+  CONFTEST_SHA256: "e8144c6d6d2ae0260b869caa60c7c262a1f95ac63ec1e5d2fb19be452d606347"
+
+jobs:
+  tms-attest:
+    name: TMS conftest gate (MIL-STD-3071 topic coverage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # Pinned release binary + sha256 verification — no `cargo install`, no package-manager
+      # install, matching this repo's "prefer pinned prebuilt binaries in CI" convention (avoids a
+      # multi-minute source compile for a tool baked into no image here).
+      - name: Install just (pinned release binary, sha256-verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL -o just.tar.gz \
+            "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${JUST_SHA256}  just.tar.gz" | sha256sum -c -
+          tar xzf just.tar.gz just
+          sudo install -m 0755 just /usr/local/bin/just
+          rm -f just.tar.gz just
+          just --version
+
+      - name: Install conftest (pinned release binary, sha256-verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL -o conftest.tar.gz \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          echo "${CONFTEST_SHA256}  conftest.tar.gz" | sha256sum -c -
+          tar xzf conftest.tar.gz conftest
+          sudo install -m 0755 conftest /usr/local/bin/conftest
+          rm -f conftest.tar.gz conftest
+          conftest --version
+
+      # Regression guard on the Rego policies THEMSELVES, before trusting their verdict on the real
+      # coverage file below — see justfile's tms-policy-selftest doc comment.
+      - name: just tms-policy-selftest (policies actually deny on a known-broken fixture)
+        run: just tms-policy-selftest
+
+      # THE GATE. Red/green verdict = conftest's own exit code against the real coverage file.
+      - name: just tms-attest-check (the gate)
+        run: just tms-attest-check
+
+      # Evidence, not just a verdict: generate the OSCAL assessment-results + human report even if
+      # the gate above failed, so the PR shows exactly which Required/Conditional topic (or which
+      # provenance/catalogue-integrity check) is missing. `if: always()` mirrors _supply-chain.yml's
+      # "Collect security-gate evidence" step.
+      - name: Generate assessment-results + compliance report
+        if: always()
+        run: just tms-attest
+
+      - name: Upload TMS compliance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tms-compliance-evidence
+          path: |
+            compliance/assessment-results.json
+            compliance/tms-compliance-report.md
+          if-no-files-found: warn
+
+      - name: TMS compliance summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## TMS compliance gate — MIL-STD-3071 topic coverage"
+            echo
+            echo "Gate verdict = the \`just tms-attest-check\` step (conftest/OPA over"
+            echo "\`compliance/policy/*.rego\` against \`docs/compliance/tms/tms-coverage.json\`) above."
+            echo
+            echo "This checks IDL type-catalogue coverage (does a shaped Rust type + topic binding"
+            echo "exist), NOT runtime publish-wiring coverage (does bin-rpi actually publish it) —"
+            echo "see the uploaded report's 'Known gap' section for that separate, currently"
+            echo "non-machine-checked axis."
+            echo
+            if [ -s compliance/tms-compliance-report.md ]; then
+              echo "### Summary (from compliance/tms-compliance-report.md)"
+              echo
+              awk '/^## Summary$/{flag=1; next} /^## Required topics/{flag=0} flag' compliance/tms-compliance-report.md
+            fi
+            echo
+            echo "Full report + machine-readable OSCAL assessment-results uploaded as artifact **tms-compliance-evidence**."
+          } >> "$GITHUB_STEP_SUMMARY"

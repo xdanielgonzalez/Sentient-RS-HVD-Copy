@@ -1,0 +1,39 @@
+# `rp2350-abi` — the FROZEN NS<->S ABI for the RP2350 TrustZone-M split (EPIC #350, story S4 #355).
+#
+# THIS IS A DEMO SCAFFOLD, NOT PRODUCTION: claims are limited to signed boot / load-time integrity /
+# IP protection vs non-physical attackers. NO FIPS, NO attestation, NO anti-tamper. RP2350 A4
+# stepping only.
+#
+# This crate is the single source of truth for:
+#   * the `sv_*` veneer error codes (mirrored verbatim in `../veneers/veneer.h`'s `#define`s — if
+#     these ever diverge, the veneer's return codes and this crate's `SvError` disagree, which is a
+#     bug in EITHER file, not a feature)
+#   * `SV_MAX_PAYLOAD` (the veneer's per-call payload cap; chunking larger payloads is TODO(#355))
+#   * the custody codes `sv_profile` reports (0/1/2)
+#   * const mapping fns between the raw `i32`/`u32` ABI codes and `lib_security`'s
+#     `SecurityError`/`KeyCustody` enums, consumed by BOTH the `s` crate (secure world, emits these
+#     codes) and (eventually) the `ns` crate (non-secure world, interprets them).
+#
+# Deliberately target-independent: this crate is `no_std` (see `src/lib.rs`) but references NO
+# `thumbv8m`-only intrinsic, no C FFI, no embassy/cortex-m dependency — it must build and its tests
+# must run on the HOST target too (`cargo test -p rp2350-abi` from a plain host toolchain), per the
+# repo's "test on the host before the target" doctrine. The only dependency is `lib-security`, and
+# only for its always-available `error`/`profile` modules (no backend feature needed — see below).
+[package]
+name = "rp2350-abi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Frozen NS<->S ABI for the RP2350 TrustZone-M demo split: sv_* error/custody codes + const mappings to lib-security's SecurityError/KeyCustody. no_std, host-testable."
+
+[dependencies]
+# `default-features = false` turns OFF `std` AND `software` (the concrete crypto backend feature,
+# which would otherwise drag in `p256`/`aes-gcm` for no reason — this crate only names the two
+# backend-agnostic enums `SecurityError` and `KeyCustody`, both defined in lib-security's
+# always-compiled `error`/`profile` modules, gated on neither feature). This is the minimal
+# dependency edge: no system library, no crypto backend, builds under any target lib-security itself
+# supports (including plain `no_std` host targets used by `cargo test`).
+lib-security = { workspace = true }

@@ -1,0 +1,50 @@
+{{- if .Values.tailscale.enabled }}
+# Tailscale serve config for the grafana sidecar (TS_SERVE_CONFIG), proxying to Grafana on
+# 127.0.0.1:3000 (same pod). Serves BOTH :80 plain HTTP and :443 HTTPS: the working URL today is
+# http:// — minting the *.ts.net cert for :443 requires the tailnet's MagicDNS + HTTPS
+# Certificates feature (same caveat as the docs site, .ci/k8s/docs/README.md), and until that is
+# enabled the https listener can't complete a handshake. Plain HTTP is acceptable here because
+# tailnet traffic is already WireGuard-encrypted in transit; :443 is kept so enabling the cert
+# feature upgrades the URL with no redeploy. AllowFunnel=false on both is the load-bearing line —
+# dashboards are reachable by TAILNET MEMBERS ONLY, never published to the internet via Funnel.
+# Schema per tailscale.com/blog/docker-tailscale-guide (same as .ci/k8s/docs/serve-config.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-tailscale-serve
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tailscale
+data:
+  serve.json: |
+    {
+      "TCP": {
+        "80": {
+          "HTTP": true
+        },
+        "443": {
+          "HTTPS": true
+        }
+      },
+      "Web": {
+        "${TS_CERT_DOMAIN}:80": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://127.0.0.1:3000"
+            }
+          }
+        },
+        "${TS_CERT_DOMAIN}:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://127.0.0.1:3000"
+            }
+          }
+        }
+      },
+      "AllowFunnel": {
+        "${TS_CERT_DOMAIN}:80": false,
+        "${TS_CERT_DOMAIN}:443": false
+      }
+    }
+{{- end }}

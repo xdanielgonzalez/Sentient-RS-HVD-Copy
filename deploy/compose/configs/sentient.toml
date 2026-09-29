@@ -1,0 +1,40 @@
+# Compose twin of the chart-rendered bin-rpi config (app-configmap.yaml,
+# values.yaml defaults). Keep in sync with deploy/charts/sentient-viz.
+[device]
+id = "METEOR-001"
+
+[serial]
+kind = "rs232"        # pty has no RTS line for rs485 direction control
+port = "/tmp/ttySIM"
+baud = 19200
+parity = "none"
+stop_bits = 1
+read_timeout_ms = 1000
+
+[poll]
+dip_addresses = [0]
+# MIL-STD-3071 mandates DcMeasurementUpdate at 1 Hz nominal (see PollConfig::validate);
+# this must stay <= 1000.
+interval_ms = 1000
+fault_every = 10
+
+[broker]
+# 0.0.0.0 so the Telegraf pod can subscribe. Plaintext, no auth — demo stack;
+# see networkPolicy.enabled in values.yaml for the mitigation.
+host = "0.0.0.0"
+port = 1883
+
+[publish]
+prefix = "tms"
+
+[greengrass]
+# Presence of this section activates GreengrassTap: the merged flat legacy JSON that WOULD be
+# bridged out to an AWS IoT Greengrass core is published to telemetry/{device_type}/{device_id}
+# on the embedded broker — the greengrass-bridge (mosquitto) service pulls that namespace off the
+# device for the Grafana parity view. The host/cert values below are consumed ONLY by
+# `bin-rpi --emit-mosquitto-bridge` (never invoked in this stack): nothing dials this host or
+# opens these files at runtime, so placeholders are fine. DEMO ONLY.
+host = "greengrass-core.invalid"
+cert_file = "/etc/sentient/demo-greengrass-client.crt"
+key_file = "/etc/sentient/demo-greengrass-client.key"
+ca_file = "/etc/sentient/demo-greengrass-ca.crt"

@@ -1,0 +1,97 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "bin-rpi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "The Raspberry Pi Linux binary (the deliverable): wires core + mapping + net + io + config."
+
+[[bin]]
+name = "bin-rpi"
+path = "src/main.rs"
+
+[dependencies]
+# Policy (poll -> map -> publish loop) + inverter leg (runtime.rs spawns run_inverter for Voltronic
+# buses); the RPi platform (HostPlatform) itself is bin-rpi-platform, below (ADR 0009).
+impl-app = { workspace = true, features = ["inverter"] }
+# The RPi (Yocto/std+tokio) platform impl of the app's seams — the composition root's adapter.
+bin-rpi-platform = { workspace = true }
+# The app contract (ADR 0009): `runtime.rs` names `RunConfig`/`MAX_DIPS`/`preflight::Preflight`
+# straight from spec-app rather than via impl-app's path-stability re-exports, so the bin reads as
+# "contract + policy (impl-app) + adapter (bin-rpi-platform)" — spec-app has no [features], so the
+# default-features-inheritance trap direct-path deps elsewhere exist to avoid does not apply here.
+spec-app = { workspace = true }
+# config.rs maps the TOML into the io/net constructor types.
+lib-io = { workspace = true, default-features = true }
+# scan.rs (#243) decodes the same Seplos vendor frames as the production poll loop, over the
+# shared lib_io::driver::read_telemetry exchange — the same pairing impl-app itself depends on.
+lib-parse = { workspace = true, default-features = false, features = ["seplos", "std"] }
+lib-mqtt = { workspace = true }
+tokio = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+figment = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+heapless = { workspace = true }
+# Secondary publish targets + location tagging (gap-closure #237/#238): `runtime::supervise` owns
+# spawning `run_writer`/`run_radio`/`run_refresher` and constructing the taps `HostPlatform`
+# fans out to (see `bin-rpi-platform`'s `DiskTap`/`MeshTap` seam types).
+# Mesh-radio publish target + multi-tier location tagging — the host publish modules of lib-net.
+lib-net = { workspace = true, features = ["host"] }
+# TMS breadth (#240 #244 #246): `tasks::heartbeat`/`tasks::reply_listener` each open their own
+# loopback MQTT client onto the embedded broker (the documented `rumqttc` fallback — see
+# `lib_mqtt::broker::impl_broker_subscriber`'s doc comment for why the in-process `LinkRx` path
+# isn't wired here) since neither task is handed a `BrokerPublisher`/`BrokerSubscriber` by
+# `runtime::supervise`'s existing call sites. `serde-json-core` decodes the inbound `Request`
+# payload with the same no_std-friendly codec `lib_mapping::sink` uses to encode every TMS publish.
+rumqttc = { workspace = true }
+serde-json-core = { workspace = true }
+lib-tms = { workspace = true }
+lib-mapping = { workspace = true, default-features = true }
+# The owned DDS/RTPS (MIL-STD-3071) transport seam (#324, WP6): `runtime::supervise` builds the
+# participant + spawns `run_dds_stack` when `[dds]` is configured; `tasks::dds::*` publish/answer
+# over the same `DdsHandle` the `DdsTap` (bin-rpi-platform) uses. Default features
+# (`backend-dustdds`) are fine — bin-rpi is Pi-only, never built for the MCU.
+lib-dds = { workspace = true }
+# Hot-path profiling (Pi-only, off by default — see the `hotpath`/`hotpath-cpu`/`hotpath-alloc`
+# features below): optional so the default `just lint`/`cargo clippy --workspace --all-targets`
+# build never links it. Feeds `examples/hotpath_e2e.rs`'s `#[hotpath::main]`/`measure_block!` and
+# (transitively, via bin-rpi-platform) `HostPlatform::emit_reading`/`emit_fault`'s
+# `#[cfg_attr(feature = "hotpath", hotpath::measure)]` annotations.
+hotpath = { version = "0.21", optional = true }
+
+[dev-dependencies]
+# Tests that mutate process-global `SENTIENT_*`/`CLOUD_MQTT_PASS` env vars must not race each other
+# (cargo test runs the crate's unit tests in parallel by default).
+serial_test = { workspace = true }
+# scan.rs's unit tests drive the bus walk over the scripted in-memory transport instead of a real
+# port (same pattern as impl-app's own dev-dependency on this feature).
+lib-io = { workspace = true, default-features = true, features = ["mock"] }
+# `examples/hotpath_e2e.rs`'s end-to-end profiling driver: a real pty-backed `SeplosSim` responder
+# (`test_kit::SeplosSim`/`BatteryState`) plus the embedded broker (`test_kit::start_broker`) — the
+# same test-support crate `test-e2e` uses, mirroring `multi_port_e2e.rs`/`sigterm_drain_e2e.rs`'s
+# harness rather than hand-rolling a second one here.
+test-kit = { workspace = true }
+# pty pair for the example's real-serial harness (mirrors `test-e2e`'s own `nix` dev-dependency;
+# `term`+`fs` is the same feature set `lib-io`'s own pty-backed tests use — no `signal` needed here,
+# unlike `sigterm_drain_e2e.rs`, since the example never sends a real SIGTERM).
+nix = { workspace = true, features = ["term", "fs"] }
+
+[features]
+# Off by default; Pi-only (see CLAUDE.md "Platform & Deployment"). `hotpath-cpu`/`hotpath-alloc` are
+# additive on top of the base `hotpath` feature, mirroring the hotpath v0.21 crate's own layout.
+# Each also forwards to `bin-rpi-platform`'s own same-named feature (Cargo feature unification is
+# per-crate, not automatic across the workspace) — without this, `HostPlatform::emit_reading`/
+# `emit_fault`'s `#[cfg_attr(feature = "hotpath", hotpath::measure)]` would stay compiled OUT of
+# `bin-rpi-platform` even with `bin-rpi --features hotpath`, and `examples/hotpath_e2e.rs`'s
+# `measure_block!("run_cycle", …)` would report the loop wrapper only, not the platform's own
+# publish path underneath it.
+hotpath = ["dep:hotpath", "hotpath/hotpath", "bin-rpi-platform/hotpath"]
+hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu", "bin-rpi-platform/hotpath-cpu"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "bin-rpi-platform/hotpath-alloc"]
+
+[lints]
+workspace = true

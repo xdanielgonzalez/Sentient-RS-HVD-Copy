@@ -1,0 +1,290 @@
+# kas build manifest — pinned wrynose (6.0 LTS) layer set for the sentient Yocto image.
+#
+# kas (https://kas.readthedocs.io) is the declarative fetch+configure driver: it clones every layer
+# below at its pinned ref, generates bblayers.conf + local.conf from this file, and hands off to
+# BitBake. Run from sentient-yocto-builder (.ci/yocto.Dockerfile), which bakes kas + BitBake's host
+# deps; this file has never been executed (greenfield authoring per the plan) — see the
+# TODO(verify-at-build) notes below for the handful of details that need confirming against the
+# actual pinned checkouts.
+#
+# Usage:
+#   kas build distro/kas/sentient.yml                                  # MACHINE=raspberrypi5 (default)
+#   KAS_MACHINE=raspberrypi4-64 kas build distro/kas/sentient.yml       # override the machine
+#   kas shell distro/kas/sentient.yml                                  # interactive BitBake shell
+#
+# Mirrors justfile's `yocto-build`/`yocto-image` recipes and release.yml's Yocto image job — see
+# those for how MACHINE is looped per shipping target (raspberrypi4-64, raspberrypi5) and how the
+# emulation-proxy machine (qemuarm64 — ARM only) is selected for the e2e lane.
+
+header:
+  version: 17
+  # kas 4.4 (pinned in .ci/yocto.Dockerfile as KAS_VERSION=4.4) supports config schema versions 1–17;
+  # verified locally that `version: 18` is hard-rejected ("compatible with version 1 to 17"). Keep this
+  # in lockstep with the kas pin in that Dockerfile — bump only when the pinned kas raises its max.
+
+# Default MACHINE. Override per-build with `KAS_MACHINE=raspberrypi4-64` (env) or a second kas
+# config layer (`kas build sentient.yml:raspberrypi4-64.yml`) — see the raspberrypi4-64 variant
+# file alongside this one for the CI-friendly override form.
+machine: raspberrypi5
+distro: sentient
+
+# TODO(verify-at-build): DISTRO=sentient resolves to distro/meta-sentient/conf/distro/sentient.conf
+# — owned by another workstream (distro/meta-sentient/**); confirm that file exists and defines
+# DISTRO_NAME/DISTRO_VERSION before the first real `kas build` (this manifest only *references* it
+# by name, per this task's scope boundary).
+
+repos:
+  # OE-core stack, pinned by COMPONENT rather than the `poky` combo repo. This is the buildable form
+  # of the wrynose (6.0) LTS: the poky combo still tracks walnascar (5.2), but its components already
+  # ship wrynose 6.0.2, so we assemble it ourselves (bitbake + openembedded-core + meta-yocto). poky
+  # is nothing but bitbake + openembedded-core + meta-yocto bundled, so this is equivalent — just at a
+  # newer LTS (supported to Apr 2030 vs wrynose's Apr 2028).
+  #
+  # bitbake: the build engine. `layers: {}` = checked out but NOT added to BBLAYERS. OE-core wrynose's
+  # sanity check requires BB_MIN_VERSION 2.18.0, so pin the bitbake 2.18 release branch.
+  bitbake:
+    url: https://git.openembedded.org/bitbake
+    branch: "2.18"
+    layers: {}
+  # openembedded-core: the `meta` core layer (toolchain, glibc, base recipes, image classes, and the
+  # qemuarm64 emulation MACHINE) + oe-init-build-env (kas auto-detects the init script
+  # here now that poky is absent).
+  openembedded-core:
+    url: https://git.openembedded.org/openembedded-core
+    branch: wrynose
+    # TODO(pin-for-release): swap `branch: wrynose` for `tag: yocto-6.0.2` once a build is green —
+    # bitbake/core publish yocto-6.0.x tags on these branches for reproducible release pins.
+    layers:
+      meta:
+  # meta-yocto: the reference-distro bits poky would otherwise bundle — meta-poky provides the
+  # poky.conf our sentient.conf `require`s; meta-yocto-bsp the reference BSPs. wrynose branch = 6.0.2.
+  meta-yocto:
+    url: https://git.yoctoproject.org/meta-yocto
+    branch: wrynose
+    layers:
+      meta-poky:
+      meta-yocto-bsp:
+
+  meta-openembedded:
+    url: https://git.openembedded.org/meta-openembedded
+    branch: wrynose
+    # TODO(verify-at-build): pin to an exact wrynose commit — see poky note above.
+    layers:
+      meta-oe:
+      meta-python:
+      meta-networking:   # mosquitto + nftables recipes (Phase 1H hardening + the mosquitto bridge)
+      meta-filesystems:
+
+  meta-raspberrypi:
+    url: https://git.yoctoproject.org/meta-raspberrypi
+    branch: wrynose
+    # TODO(verify-at-build): pin to an exact wrynose commit. Confirms MACHINE=raspberrypi5 exists
+    # on this branch (per the plan's verified-facts: Pi 5 support landed ~wrynose) — re-verify
+    # `conf/machine/raspberrypi5.conf` is present in the exact pinned commit, not just "somewhere
+    # on the wrynose branch history."
+    layers:
+      .:
+
+  meta-security:
+    url: https://git.yoctoproject.org/meta-security
+    branch: wrynose
+    # TODO(verify-at-build): pin to an exact wrynose commit. Provides the `security` DISTRO_FEATURE
+    # + KSPP-adjacent recipes/classes this distro's hardening (Phase 1H) builds on.
+    # The core meta-security layer is at the REPO ROOT (verified: conf/layer.conf at top level);
+    # meta-hardening/meta-integrity/meta-parsec/meta-tpm are separate optional sub-layers, add later.
+    layers:
+      .:
+
+  # ---- Follow-up layers: fetched-ready but DELIBERATELY GATED (do NOT enable in the first image) ----
+  # These are wired here so they're one uncomment from use, but their bbappends would alter the
+  # shipped image the moment they land on BBLAYERS — so they stay commented until their tracked
+  # follow-up is scheduled. Both VERIFIED to have a `wrynose` branch (compatible with our pin).
+  #
+  # meta-raspberrypi-secure — RPi secure boot + verified/encrypted storage (dm-verity) + runtime
+  # integrity. Enabling it is HARDENING FOLLOW-UP #158. WARNING: secure boot fuses customer keys into
+  # one-time-programmable OTP — IRREVERSIBLE; stage on throwaway hardware first. Deps: meta-raspberrypi.
+  #   meta-raspberrypi-secure:
+  #     url: https://github.com/embetrix/meta-raspberrypi-secure.git
+  #     branch: wrynose
+  #     layers:
+  #       .:
+  #
+  # meta-rauc + meta-rauc-raspberrypi — secure A/B OTA (X.509-signed .raucb bundles + bootloader
+  # failover). Enabling it is OTA FOLLOW-UP #160. WARNING: meta-rauc-raspberrypi switches the image to
+  # a REDUNDANT A/B .wic layout + U-Boot — a FOUNDATIONAL partition change; decide the slot layout
+  # before freezing the single-rootfs .wic (tasks #152/#157), not after. Deps: meta-rauc + meta-raspberrypi.
+  #   meta-rauc:
+  #     url: https://github.com/rauc/meta-rauc.git
+  #     branch: wrynose
+  #     layers:
+  #       .:
+  #   meta-rauc-community:
+  #     url: https://github.com/rauc/meta-rauc-community.git
+  #     branch: wrynose
+  #     layers:
+  #       meta-rauc-raspberrypi:
+
+  # Our own layer — the local in-tree checkout (this repo), not fetched. `path` is resolved relative
+  # to KAS_WORK_DIR (set to <repo>/yocto by _yocto.yml/release.yml), and the layer lives at
+  # <repo>/distro/meta-sentient — one level up from the work dir, then into distro/ — hence
+  # `../distro/meta-sentient`. (No `url`, so kas treats it as already-present and only adds it to
+  # BBLAYERS; it does not try to clone it.)
+  meta-sentient:
+    path: ../distro/meta-sentient
+    layers:
+      .:
+
+# Everything BitBake needs beyond the layer set: cache locations, image feature trims, and the
+# CVE/SBOM gate. Appended verbatim into the generated local.conf (kas does NOT interpret it).
+local_conf_header:
+  sentient-connectivity-check: |
+    # Disable BitBake's start-of-build network sanity gate. It fetches CONNECTIVITY_CHECK_URIS
+    # (yoctoproject.org/connectivity.html) purely to WARN when the host has no internet — it is not
+    # a fetch any recipe needs. On the self-hosted ARC runners egress is occasionally slow on the
+    # first attempt (rustup/downloads recover on retry), but this one-shot check has no retry, so a
+    # transient blip aborts the WHOLE build with a non-zero exit. UAT is a pure offline boot-smoke of
+    # the prebuilt golden and must never depend on it; the golden build's real fetches still run (and
+    # fail loudly if the network is genuinely down), so dropping the gate loses no real signal.
+    CONNECTIVITY_CHECK_URIS = ""
+
+  sentient-security-scan: |
+    # SPDX SBOM generation for every recipe (create-spdx still exists in wrynose classes/; a
+    # create-spdx-3.0 SPDX-3 variant also ships). Complementary to `cargo audit`/`cargo deny`, which
+    # scan the Rust crate graph — the Yocto SBOM covers the system layer (kernel/openssl/busybox/
+    # mosquitto/etc); both gates are needed, neither substitutes for the other.
+    INHERIT += "create-spdx"
+    # TODO(wrynose-cve — enable once the base image is green): wrynose 6.0 REMOVED cve-check.bbclass
+    # (OE-Core 00de455f8d3a) + CVE_CHECK_IGNORE. Replacement is the SBOM-integrated flow (Bootlin):
+    #   INHERIT += "create-spdx vex"   # SPDX v3 SBOM (*.rootfs.spdx.json) + VEX manifest (*.rootfs.json)
+    # then run the `sbom-cve-check` CLI OUT-OF-BUILD in CI against those artifacts (see HARDENING.md §7
+    # + issue #169). VERIFY class scope first: `vex.bbclass` is in meta/classes/ (globally INHERITable)
+    # but `sbom-cve-check.bbclass` was found in meta/classes-recipe/ (recipe scope) — a plain global
+    # INHERIT of it will likely fail like cve-check did, so keep sbom-cve-check as the out-of-build CLI.
+    # Migrate any accepted-CVE suppressions from CVE_CHECK_IGNORE to CVE_STATUS / VEX justifications.
+    # Left off INHERIT here for now only so wrynose bring-up can parse.
+
+  sentient-image-features: |
+    # Image minimization (Phase 1H #1): no interactive-login debug backdoor, no package manager in
+    # the shipped rootfs, no dev/SDK tooling, no SSH server baked in by default.
+    EXTRA_IMAGE_FEATURES:remove = "debug-tweaks"
+    IMAGE_FEATURES:remove = "package-management ssh-server-dropbear ssh-server-openssh"
+    # TODO(verify-at-build): `debug-tweaks` is ON by default via local.conf.sample in a fresh
+    # poky checkout (enables root login + empty passwords) — confirm this `:remove` override
+    # actually wins against that default ordering in the generated local.conf (bitbake.conf
+    # variable-override precedence), and that read-only-rootfs (added separately by
+    # meta-sentient's sentient-image.bb per that recipe's own IMAGE_FEATURES, not here) is
+    # compatible with the mosquitto/systemd package set once that recipe lands.
+
+  sentient-image-fstype: |
+    # Emit an UNCOMPRESSED ext4 rootfs (in addition to any machine default). The qemu boot-smoke +
+    # e2e need a runqemu-bootable rootfs, but the emulation MACHINEs otherwise deploy only a compressed
+    # .ext4.zst — runqemu refuses that except in snapshot mode, AND the Collect step's `*.rootfs.ext4`
+    # glob can't stage a .zst (it staged only kernel+manifest, so the boot job had no rootfs). Appending
+    # `ext4` guarantees the uncompressed image exists; harmless extra artifact on the shipping Pi build.
+    IMAGE_FSTYPES:append = " ext4"
+
+  sentient-cache-dirs: |
+    # Shared download + shared-state caches — mandatory for tractable CI build times (Yocto builds
+    # are heavy; sstate reuse is the difference between hours and minutes on an unchanged layer
+    # set). Paths match .ci/yocto.Dockerfile's YOCTO_DL_DIR/YOCTO_SSTATE_DIR env (owned by the
+    # `builder` user there) and release.yml's Yocto job cache step — keep all three in lockstep.
+    # ABSOLUTE paths (not ${TOPDIR}-relative) so BitBake's read/write dir is the SAME location the
+    # kas step's env (DL_DIR/SSTATE_DIR), the chown, and the `mc mirror` upload all name — one
+    # canonical /opt/yocto-cache. These match .ci/yocto.Dockerfile's YOCTO_DL_DIR/YOCTO_SSTATE_DIR
+    # (owned by `builder`). A ${TOPDIR}-relative path would resolve under the kas work dir and
+    # silently diverge from the path the mirror uploads, so the mirror would sync the wrong tree.
+    DL_DIR ?= "/opt/yocto-cache/downloads"
+    SSTATE_DIR ?= "/opt/yocto-cache/sstate-cache"
+
+  sentient-security-flags: |
+    # Distro-wide compiler/binary hardening (PIE, full RELRO+BIND_NOW, stack-protector-strong,
+    # FORTIFY_SOURCE) for every C/C++ recipe in the image — see
+    # distro/meta-sentient/conf/distro/include/security_flags.inc (owned by the distro-conf
+    # workstream; this manifest just documents that `sentient.conf` is expected to `require` it).
+    # Our own bin-rpi deliverable is a prebuilt static-PIE Rust binary and is not recompiled by
+    # BitBake, so these flags hardening every OTHER package (busybox, mosquitto, kernel userspace
+    # tools) is the actual attack-surface win — see that .inc file's own header comment.
+    # require conf/distro/include/security_flags.inc   # (pulled in via DISTRO=sentient's own .conf, not duplicated here)
+
+  sentient-sstate-hashing: |
+    # sstate lookups MUST resolve by EXACT taskhash for the mirror below to ever hit. This is NOT the
+    # default on this stack and must be stated explicitly: since honister, OE-core defaults to
+    # BB_SIGNATURE_HANDLER="OEEquivHash" + BB_HASHSERVE="auto", which starts a LOCAL hash-equivalence
+    # server and rewrites task hashes into locally-invented unihashes. Mirror objects are keyed by the
+    # hashes of the build that uploaded them, so locally-invented unihashes match nothing and BitBake
+    # itself warns:
+    #   "You are using a local hash equivalence server but have configured an sstate mirror.
+    #    This will likely mean no sstate will match from the mirror."
+    # Measured cost of leaving it at the default (UAT run 30580778417, 2026-07-30):
+    #   Sstate summary: Wanted 2589 Local 0 Mirrors 294 Missed 2295 Current 0 (11% match, 0% complete)
+    # — an 89% miss that made the *app sysext* job recompile the whole native toolchain (binutils-,
+    # python3-, qemu-, gnutls-native) from source and blow its 60-minute timeout, every run. Pinning
+    # OEBasicHash makes taskhashes deterministic across runs and machines, which is exactly what the
+    # two-tier mirror below already assumed.
+    #
+    # (The alternative — keep OEEquivHash and point BB_HASHSERVE_UPSTREAM at a SHARED hashserv — is
+    # what the note under sentient-sstate-mirror describes; it buys upstream target-sstate reuse but
+    # still needs a shared server to be reachable. Determinism is worth more to us than upstream reuse
+    # for a security-hardened distro whose target outputs genuinely differ.)
+    BB_SIGNATURE_HANDLER = "OEBasicHash"
+    BB_HASHSERVE = ""
+
+  sentient-sstate-mirror: |
+    # Two-tier shared-state mirror — OUR MinIO first, the public Yocto mirror second. BitBake tries each
+    # in order and pulls prebuilt sstate objects on demand (wget over HTTP: the bitbake 2.18 s3:// fetcher
+    # has no MinIO-endpoint knob, so the mirror is served over MinIO's HTTP S3 gateway with the sstate/ +
+    # downloads/ prefixes set anonymous-read — in-cluster only). Reads resolve by EXACT taskhash, which
+    # `sentient-sstate-hashing` above PINS (OEBasicHash) — it is not the stack default, and without that
+    # pin nothing here matches.
+    #   1. MinIO (cache/sstate) — OUR hardened-distro sstate: every target recipe our security_flags /
+    #      KSPP kernel fragment perturb. The kas step's post-build `mc mirror` write-syncs $SSTATE_DIR
+    #      here (authenticated), so the mirror ACCUMULATES across runs — a partial/OOM'd build still
+    #      contributes every object it produced, and the next run DOWNLOADS instead of recompiling.
+    #   2. Public Yocto mirror (/all) — the DISTRO-independent -native/-cross tooling (gcc-cross,
+    #      binutils, autoconf-native, …) whose hashes match upstream poky regardless of our DISTRO
+    #      (security_flags only touch TARGET_CC_ARCH, not native). The cold-build freebie.
+    # (To ALSO reuse UPSTREAM target sstate, add BB_HASHSERVE_UPSTREAM="wss://hashserv.yoctoproject.org/ws"
+    # + BB_HASHSERVE="auto" + BB_SIGNATURE_HANDLER="OEEquivHash" — needs python3-websockets in the image;
+    # a follow-up, and marginal for a security-hardened distro whose target outputs genuinely differ.)
+    SSTATE_MIRRORS ?= "\
+        file://.* http://minio-cache-direct.minio-tenant.svc:9000/cache/sstate/PATH;downloadfilename=PATH \
+        file://.* http://sstate.yoctoproject.org/all/PATH;downloadfilename=PATH \
+        "
+
+  sentient-source-mirror: |
+    # Source (downloads) premirror — the same MinIO bucket's downloads/ prefix, tried BEFORE upstream
+    # SRC_URIs, so a warm mirror fetches tarballs/git from MinIO instead of the internet (faster + robust
+    # to upstream churn/outages). own-mirrors synthesizes the PREMIRRORS redirect for every fetcher. The
+    # kas step's post-build `mc mirror` write-syncs $DL_DIR here alongside sstate.
+    SOURCE_MIRROR_URL ?= "http://minio-cache-direct.minio-tenant.svc:9000/cache/downloads/"
+    INHERIT += "own-mirrors"
+
+  sentient-build-limits: |
+    # Memory-pressure regulation — without icecc all compiles run locally and a burst of heavy
+    # do_install/do_compile (perl, gnutls, gobject-introspection, python3) OOM-kills the pod (exit
+    # 137, seen at ~93%). BitBake reads cgroup v2 PSI and STOPS launching new tasks while memory
+    # pressure exceeds this many microseconds (avg over the window) — adaptive, keeps throughput up
+    # when RAM is free and throttles when it's tight. Paired with the RAM-capped BB_NUMBER_THREADS/
+    # PARALLEL_MAKE set per-run in the kas step. (BB_NUMBER_THREADS/PARALLEL_MAKE come from the
+    # generated limits fragment, so they are NOT set here.)
+    #
+    # 4000 µs was far too tight and throttled a build that was nowhere near out of RAM. Measured on
+    # UAT run 30580778417: 182 "MEM pressure (>4000.0us) is limiting task startup" events in 53 min
+    # while the node reported only ~4-6 GB in use. The reason that looks contradictory is that PSI
+    # counts RECLAIM STALLS, not RSS — a Yocto build churns a huge page cache (12 GB of the 21 GB
+    # node was buff/cache), and reclaiming it registers as memory pressure even though free memory is
+    # plentiful. At 4000 µs (0.4% stall) ordinary page-cache reclaim trips the throttle, so BitBake
+    # kept parking task startup and parallelism never ramped.
+    #
+    # NOTE ON CONTAINERS: BitBake reads /proc/pressure/memory, which is NOT namespaced — inside a pod
+    # it reflects the WHOLE NODE. Any other tenant's I/O churn throttles our build, which argues for a
+    # threshold well above the noise floor rather than one that trips on background reclaim.
+    BB_PRESSURE_MAX_MEMORY = "20000"
+
+
+# TODO(verify-at-build): kas supports a `target:` key to set the default BitBake target
+# (e.g. `target: sentient-image`) — add once distro/meta-sentient/recipes-sentient/sentient-image/
+# sentient-image.bb exists (owned by another workstream; not yet landed at authoring time). Until
+# then `kas build` with no target falls back to kas's own default behavior (build all declared
+# bblayers with no implicit image target) — the justfile `yocto-image` recipe passes the target
+# explicitly on the BitBake command line as a stopgap; see that recipe's own comment.

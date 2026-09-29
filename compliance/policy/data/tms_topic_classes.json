@@ -1,0 +1,30 @@
+{
+  "tms_topic_classes": {
+    "_source": "MIL-STD-3071 Table B.2 (p.65 printed / PDF p.102) + A.8.7 Topic Usage (pp.44-45 printed / PDF pp.81-83), docs/compliance/tms/mil-std-3071.pdf. Hand-curated, kept in sync with compliance/oscal/catalog.json's required-topics/conditional-topics control groups (one entry here per tms-topic-* control in those two groups).",
+    "_note": "tms-coverage.json (the conftest input) carries NO usage-class field of its own -- it is pure IDL type-catalogue coverage (every @topic binding the descriptor factory parsed from the IDL, regardless of Required/Conditional/Optional). This file is the missing cross-reference: which topic names MIL-STD-3071 classifies as Required or Conditional, so the Rego policies in this directory can assert 'every Required/Conditional topic has a type binding in the catalogue' against the real Table B.2, not a guess. NOTE the top-level `tms_topic_classes` wrapper key: conftest's --data loader merges a JSON file's OWN top-level keys straight into the `data` root when the file sits directly under the given --data root (no intermediate subdirectory) -- wrapping under this key keeps the reference `data.tms_topic_classes.*` stable regardless of which directory is passed to --data.",
+    "min_topic_bindings": 37,
+    "required_topics": [
+      "ActiveDiagnosticState",
+      "ActiveMicrogridControllerState",
+      "DeviceInfo",
+      "EnergyStartStopState",
+      "Heartbeat",
+      "PowerPortState",
+      "Reply",
+      "StorageUpdate"
+    ],
+    "conditional_topics": {
+      "AcLoadSharingState": "HAS AC PORTS",
+      "AcMeasurementUpdate": "HAS AC METERS",
+      "AcSummaryMeasurementUpdate": "HAS AC SUMMARY METERS",
+      "AuthorizationToEnergizeReply": "SUPPORTS REQUEST",
+      "ControlParameterState": "HAS CONTROL PARAMETERS",
+      "DcLoadSharingState": "HAS DC PORTS",
+      "DcMeasurementUpdate": "HAS DC METERS",
+      "DcSummaryMeasurementUpdate": "HAS DC SUMMARY METERS",
+      "GroundingCircuitState": "HAS DEVICE GROUND PORTS",
+      "IdentityNicknameState": "SUPPORTS REQUEST",
+      "OperatorIntentState": "SUPPORTS REQUEST"
+    }
+  }
+}

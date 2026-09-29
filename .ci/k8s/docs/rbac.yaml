@@ -1,0 +1,77 @@
+# RBAC for the docs site, two identities:
+#
+# 1. `sentient-docs` — the POD's ServiceAccount. The tailscale sidecar (containerboot) persists
+#    its node state in the `sentient-docs-tailscale-state` Secret (TS_KUBE_SECRET), so it needs
+#    create (first boot; create cannot be resourceName-scoped) plus name-scoped get/update/patch.
+#
+# 2. `docs-deployer` — the CI rollout identity. docs.yml only ever does
+#    `kubectl rollout restart deployment/sentient-docs` + `rollout status`, so the Role is
+#    deployments read + name-scoped patch, nothing else. Its long-lived token is minted by
+#    setup-deployer-kubeconfig.sh and stored as the DOCS_KUBECONFIG GitHub secret.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sentient-docs
+  namespace: docs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sentient-docs-state
+  namespace: docs
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["sentient-docs-tailscale-state"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sentient-docs-state
+  namespace: docs
+subjects:
+  - kind: ServiceAccount
+    name: sentient-docs
+    namespace: docs
+roleRef:
+  kind: Role
+  name: sentient-docs-state
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: docs-deployer
+  namespace: docs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: docs-deployer
+  namespace: docs
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["sentient-docs"]
+    verbs: ["patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: docs-deployer
+  namespace: docs
+subjects:
+  - kind: ServiceAccount
+    name: docs-deployer
+    namespace: docs
+roleRef:
+  kind: Role
+  name: docs-deployer
+  apiGroup: rbac.authorization.k8s.io

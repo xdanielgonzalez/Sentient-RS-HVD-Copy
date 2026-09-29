@@ -1,0 +1,497 @@
+/* ==========================================================================
+   HVD house theme for the sentient-rs mdbook site.
+
+   Replicates the design system of the HVD "Parity Gap Analysis" engineering
+   report artifact onto mdbook v0.5. Three layers, in order:
+
+     Layer 1 — theme tokens: remap mdbook's own CSS custom properties per
+               theme class (.light = light tokens; .navy/.coal/.ayu = dark
+               tokens), plus the --hvd-* component tokens each layer-3
+               component consumes.
+     Layer 2 — typography & layout: 960px column, system sans body,
+               ui-monospace code, report-grade heading scale.
+     Layer 3 — components: .eyebrow, sidebar part titles, .pill status
+               pills, verdict-box blockquotes, .card, table treatment,
+               code chips & bordered code blocks.
+
+   NOTE mdbook sets `:root { font-size: 62.5% }` (1rem = 10px), so artifact
+   rem values are expressed here in px (artifact rem was 16px-based).
+   This stylesheet loads AFTER variables/general/chrome/highlight css, so
+   equal-specificity rules here win by source order.
+   ========================================================================== */
+
+/* ==========================================================================
+   LAYER 1 — THEME TOKENS
+   ========================================================================== */
+
+/* --- Global knobs + light-mode HVD component tokens (defaults) ----------- */
+:root {
+    /* mdbook honors this for the main column width (stock: 750px). */
+    --content-max-width: 960px;
+
+    /* Everything mdbook renders in mono (code, kbd, sidebar code) follows. */
+    --mono-font: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono",
+        Menlo, Consolas, monospace;
+
+    /* HVD component tokens — light values; dark themes override below. */
+    --hvd-surface: #ffffff;
+    --hvd-surface-2: #eef1f5;
+    --hvd-border: #d9dfe6;
+    --hvd-text-lo: #5b6673;
+    --hvd-text-faint: #8894a0;
+    --hvd-accent: #4a5fd1;
+    --hvd-accent-soft: #e8eaf9;
+    --hvd-parity: #238a5a;
+    --hvd-parity-bg: #e2f2ea;
+    --hvd-superior: #2f6fce;
+    --hvd-superior-bg: #e4edfb;
+    --hvd-partial: #b8860b;
+    --hvd-partial-bg: #f7ecd7;
+    --hvd-missing: #c8433a;
+    --hvd-missing-bg: #f8e3e0;
+    --hvd-na: #5b6673;
+    --hvd-na-bg: #eceff2;
+    --hvd-shadow: 0 1px 2px rgba(20, 30, 50, .06),
+        0 8px 24px -12px rgba(20, 30, 50, .12);
+}
+
+/* --- Light theme: remap mdbook's own variables (mirrors variables.css,
+       incl. the no-JS fallback selector) ---------------------------------- */
+.light,
+html:not(.js) {
+    --bg: #f5f7fa;
+    --fg: #12181f;
+
+    --sidebar-bg: #ffffff;
+    --sidebar-fg: #5b6673;
+    --sidebar-non-existant: #8894a0;
+    --sidebar-active: #4a5fd1;
+    --sidebar-spacer: #eef1f5;
+
+    --scrollbar: #8894a0;
+
+    --icons: #5b6673;
+    --icons-hover: #12181f;
+
+    --links: #4a5fd1;
+
+    --inline-code-color: #12181f;
+
+    --theme-popup-bg: #ffffff;
+    --theme-popup-border: #d9dfe6;
+    --theme-hover: #eef1f5;
+
+    --quote-bg: #e8eaf9;
+    --quote-border: #d9dfe6;
+
+    --table-border-color: #d9dfe6;
+    --table-header-bg: #eef1f5;
+    --table-alternate-bg: transparent;
+
+    --searchbar-border-color: #d9dfe6;
+    --searchbar-bg: #ffffff;
+    --searchbar-fg: #12181f;
+    --searchbar-shadow-color: #d9dfe6;
+    --searchresults-header-fg: #8894a0;
+    --searchresults-border-color: #d9dfe6;
+    --searchresults-li-bg: #eef1f5;
+    --search-mark-bg: #e8eaf9;
+
+    --color-scheme: light;
+
+    --footnote-highlight: #4a5fd1;
+    --sidebar-header-border-color: #4a5fd1;
+}
+
+/* --- Dark themes: navy, coal, and ayu all carry the HVD dark palette so
+       every dark pick in the theme menu stays on-brand -------------------- */
+.navy,
+.coal,
+.ayu {
+    --bg: #0b0f14;
+    --fg: #e7edf3;
+
+    --sidebar-bg: #131a22;
+    --sidebar-fg: #9aa5b2;
+    --sidebar-non-existant: #6b7684;
+    --sidebar-active: #7f9bff;
+    --sidebar-spacer: #1a222c;
+
+    --scrollbar: #6b7684;
+
+    --icons: #6b7684;
+    --icons-hover: #e7edf3;
+
+    --links: #7f9bff;
+
+    --inline-code-color: #e7edf3;
+
+    --theme-popup-bg: #131a22;
+    --theme-popup-border: #28313c;
+    --theme-hover: #1a222c;
+
+    --quote-bg: #1c2340;
+    --quote-border: #28313c;
+
+    --table-border-color: #28313c;
+    --table-header-bg: #1a222c;
+    --table-alternate-bg: transparent;
+
+    --searchbar-border-color: #28313c;
+    --searchbar-bg: #1a222c;
+    --searchbar-fg: #e7edf3;
+    --searchbar-shadow-color: rgba(0, 0, 0, .5);
+    --searchresults-header-fg: #6b7684;
+    --searchresults-border-color: #28313c;
+    --searchresults-li-bg: #1a222c;
+    --search-mark-bg: #1c2340;
+
+    --color-scheme: dark;
+
+    --footnote-highlight: #7f9bff;
+    --sidebar-header-border-color: #7f9bff;
+
+    /* HVD component tokens — dark variants. */
+    --hvd-surface: #131a22;
+    --hvd-surface-2: #1a222c;
+    --hvd-border: #28313c;
+    --hvd-text-lo: #9aa5b2;
+    --hvd-text-faint: #6b7684;
+    --hvd-accent: #7f9bff;
+    --hvd-accent-soft: #1c2340;
+    --hvd-parity: #2fa876;
+    --hvd-parity-bg: #113025;
+    --hvd-superior: #4d8fe0;
+    --hvd-superior-bg: #16233a;
+    --hvd-partial: #b87a1a;
+    --hvd-partial-bg: #2e2210;
+    --hvd-missing: #dd4a6a;
+    --hvd-missing-bg: #341620;
+    --hvd-na: #8792a0;
+    --hvd-na-bg: #1b222a;
+    --hvd-shadow: 0 1px 2px rgba(0, 0, 0, .3),
+        0 12px 32px -16px rgba(0, 0, 0, .5);
+}
+
+/* --- No-JS fallback under a dark OS preference (mirrors variables.css) --- */
+@media (prefers-color-scheme: dark) {
+    html:not(.js) {
+        --bg: #0b0f14;
+        --fg: #e7edf3;
+
+        --sidebar-bg: #131a22;
+        --sidebar-fg: #9aa5b2;
+        --sidebar-non-existant: #6b7684;
+        --sidebar-active: #7f9bff;
+        --sidebar-spacer: #1a222c;
+
+        --scrollbar: #6b7684;
+
+        --icons: #6b7684;
+        --icons-hover: #e7edf3;
+
+        --links: #7f9bff;
+
+        --inline-code-color: #e7edf3;
+
+        --theme-popup-bg: #131a22;
+        --theme-popup-border: #28313c;
+        --theme-hover: #1a222c;
+
+        --quote-bg: #1c2340;
+        --quote-border: #28313c;
+
+        --table-border-color: #28313c;
+        --table-header-bg: #1a222c;
+        --table-alternate-bg: transparent;
+
+        --searchbar-border-color: #28313c;
+        --searchbar-bg: #1a222c;
+        --searchbar-fg: #e7edf3;
+        --searchbar-shadow-color: rgba(0, 0, 0, .5);
+        --searchresults-header-fg: #6b7684;
+        --searchresults-border-color: #28313c;
+        --searchresults-li-bg: #1a222c;
+        --search-mark-bg: #1c2340;
+
+        --color-scheme: dark;
+
+        --footnote-highlight: #7f9bff;
+        --sidebar-header-border-color: #7f9bff;
+
+        --hvd-surface: #131a22;
+        --hvd-surface-2: #1a222c;
+        --hvd-border: #28313c;
+        --hvd-text-lo: #9aa5b2;
+        --hvd-text-faint: #6b7684;
+        --hvd-accent: #7f9bff;
+        --hvd-accent-soft: #1c2340;
+        --hvd-parity: #2fa876;
+        --hvd-parity-bg: #113025;
+        --hvd-superior: #4d8fe0;
+        --hvd-superior-bg: #16233a;
+        --hvd-partial: #b87a1a;
+        --hvd-partial-bg: #2e2210;
+        --hvd-missing: #dd4a6a;
+        --hvd-missing-bg: #341620;
+        --hvd-na: #8792a0;
+        --hvd-na-bg: #1b222a;
+        --hvd-shadow: 0 1px 2px rgba(0, 0, 0, .3),
+            0 12px 32px -16px rgba(0, 0, 0, .5);
+    }
+}
+
+/* ==========================================================================
+   LAYER 2 — TYPOGRAPHY & LAYOUT
+   ========================================================================== */
+
+/* System sans body (replaces mdbook's Open Sans webfont). Body stays at
+   mdbook's 1.6rem = 16px. */
+html {
+    font-family: -apple-system, "Segoe UI", system-ui, ui-sans-serif, Roboto,
+        sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+body {
+    line-height: 1.55;
+}
+
+/* mdbook pins these to 1.45em — lift to the artifact's 1.55. */
+.content p,
+.content ol,
+.content ul {
+    line-height: 1.55;
+}
+
+::selection {
+    background: var(--hvd-accent-soft);
+}
+
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible {
+    outline: 2px solid var(--hvd-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+/* Heading scale (artifact rem values × 16px, since mdbook's rem = 10px).
+   Scoped to .content so the menu-bar h1.menu-title is untouched. */
+.content h1 {
+    font-size: clamp(27px, 3.4vw, 37.5px);
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+    font-weight: 700;
+    text-wrap: balance;
+}
+
+.content h2 {
+    font-size: 21px;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    font-weight: 700;
+    margin-block-start: 2.2em;
+}
+
+.content h3 {
+    font-size: 16.5px;
+    letter-spacing: -0.005em;
+    font-weight: 700;
+}
+
+.content strong {
+    font-weight: 650;
+}
+
+/* ==========================================================================
+   LAYER 3 — HVD COMPONENTS
+   ========================================================================== */
+
+/* --- Eyebrow kicker (mono micro-label above a page h1) ------------------- */
+.eyebrow,
+.content .eyebrow {
+    font-family: var(--mono-font);
+    font-size: 12.5px;
+    font-weight: 400;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--hvd-accent);
+    line-height: 1.4;
+    margin: 0 0 10px;
+}
+
+/* --- Sidebar part titles as eyebrow-styled section kickers --------------- */
+/* Same selector general.css uses; this file loads later so it wins. */
+.chapter li.part-title {
+    font-family: var(--mono-font);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--hvd-text-lo);
+    margin: 22px 0 6px;
+}
+
+/* Chapter numbers in the sidebar: faint mono, like the artifact's h2 .num. */
+.chapter li a strong {
+    font-family: var(--mono-font);
+    font-size: .85em;
+    font-weight: 500;
+    color: var(--hvd-text-faint);
+}
+
+/* --- Status pills -------------------------------------------------------- */
+/* .pill--ok = parity, .pill--warn = partial, .pill--todo = missing. */
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--mono-font);
+    font-size: 11.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    padding: 2.5px 8px;
+    border-radius: 100px;
+    white-space: nowrap;
+    line-height: 1.6;
+    color: var(--hvd-na);
+    background: var(--hvd-na-bg);
+}
+
+.pill::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.pill--ok {
+    color: var(--hvd-parity);
+    background: var(--hvd-parity-bg);
+}
+
+.pill--warn {
+    color: var(--hvd-partial);
+    background: var(--hvd-partial-bg);
+}
+
+.pill--todo {
+    color: var(--hvd-missing);
+    background: var(--hvd-missing-bg);
+}
+
+/* --- Blockquote as the accent-soft verdict box --------------------------- */
+/* GitHub-alert blockquotes ([!NOTE] etc.) keep mdbook's .blockquote-tag
+   treatment via the :not() exclusion. */
+.content blockquote:not(.blockquote-tag) {
+    margin: 20px 0;
+    padding: 20px 24px;
+    background: var(--hvd-accent-soft);
+    border: 1px solid var(--hvd-border);
+    border-radius: 10px;
+    line-height: 1.6;
+}
+
+.content blockquote:not(.blockquote-tag) p:first-child {
+    margin-top: 0;
+}
+
+.content blockquote:not(.blockquote-tag) p:last-child {
+    margin-bottom: 0;
+}
+
+/* --- Card ---------------------------------------------------------------- */
+.card {
+    background: var(--hvd-surface);
+    border: 1px solid var(--hvd-border);
+    border-radius: 10px;
+    padding: 22px 24px;
+    box-shadow: var(--hvd-shadow);
+    margin: 20px 0;
+}
+
+/* --- Tables: bordered scrolling surface, mono uppercase header ----------- */
+/* mdbook wraps every Markdown table in <div class="table-wrapper"> with
+   overflow-x: auto; the radius clips because overflow is non-visible. */
+.content .table-wrapper {
+    border: 1px solid var(--hvd-border);
+    border-radius: 10px;
+    background: var(--hvd-surface);
+    box-shadow: var(--hvd-shadow);
+    margin: 20px 0;
+}
+
+.content .table-wrapper table {
+    width: 100%;
+    margin: 0;
+}
+
+table {
+    font-size: 14px;
+}
+
+table td {
+    padding: 10px 14px;
+    border: none;
+    border-block-end: 1px solid var(--hvd-border);
+    vertical-align: top;
+}
+
+table thead {
+    background: var(--hvd-surface-2);
+}
+
+table thead tr {
+    border: none;
+}
+
+table thead th {
+    font-family: var(--mono-font);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--hvd-text-faint);
+    text-align: left;
+    padding: 10px 14px;
+    border-block-end: 1px solid var(--hvd-border);
+}
+
+/* Artifact tables use row hover, not zebra striping. */
+table tbody tr:nth-child(2n) {
+    background: transparent;
+}
+
+table tbody tr:hover {
+    background: var(--hvd-surface-2);
+}
+
+table tbody tr:last-child td {
+    border-block-end: none;
+}
+
+/* --- Inline code chip ---------------------------------------------------- */
+/* Color comes from --inline-code-color (remapped per theme above) so code
+   inside links keeps the link color. */
+.content :not(pre) > code {
+    background: var(--hvd-surface-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: .91em;
+    word-break: break-word;
+}
+
+/* --- Code blocks: bordered, rounded, on surface -------------------------- */
+/* Beats the per-theme highlight.js backgrounds (.hljs) on specificity. */
+.content pre > code {
+    background: var(--hvd-surface);
+    border: 1px solid var(--hvd-border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 13.5px;
+    line-height: 1.6;
+    overflow-x: auto;
+}

@@ -1,0 +1,292 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lib-parse",
+    # The vendor-neutral canonical device model (CanonicalReading/Fault + inverter*). Sibling of
+    # lib-tms; neither depends on the other. no_std core builds for the MCU.
+    "crates/lib-canonical",
+    # Bounded in-memory canonical telemetry store (CanonicalStore + pending-topic tracking) — the
+    # render-on-output memory model, no_std, over lib-canonical (ADR 0009). Both the app policy and
+    # every platform adapter depend on it, neither on the other.
+    "crates/lib-store",
+    # The PURE, 100%-generated MIL-STD-3071 model (src/generated.rs from tools/tms-idl-codegen).
+    # heapless + serde only; no canonical/JsonSink dep. no_std core builds for the MCU.
+    "crates/lib-tms",
+    "crates/lib-mapping",
+    "crates/lib-io",
+    "crates/lib-mqtt",
+    # DDS/RTPS (MIL-STD-3071) transport for the Pi (service layer, std/tokio, NOT no_std): an owned
+    # DdsParticipant/DdsWriter seam over a single dust_dds 0.15.0 backend, publishing pre-serialized
+    # XCDR2 (lib-tms chains) via a custom UDP/IPv6 TransportParticipantFactory + D.5 QoS translation.
+    "crates/lib-dds",
+    # The app contract (ADR 0009): the Platform port + RunConfig/Health + preflight. Unconditionally
+    # no_std — the stable, abstract spine impl-app and every platform adapter depend down onto.
+    "crates/spec-app",
+    "crates/impl-app",
+    # The Embassy MCU platform impl (EPIC #350, story #352: MCU runtime pivot Zephyr -> Embassy),
+    # replacing the retired bin/zephyr/platform. Host-clippy-able peer of bin-rpi-platform, but
+    # no_std and deliberately embassy-version-free (see its own Cargo.toml comment); the concrete
+    # embassy types are supplied by bin/mcu-rp2350 (excluded workspace, below).
+    "crates/bin/mcu-platform",
+    # The RPi (Yocto/std+tokio) platform impl, extracted from impl-app's former `host` module
+    # (ADR 0009, WS3) — the symmetric peer of bin-mcu-platform. Depends on spec-app (the
+    # contract), never on impl-app (the policy): the ADR's dependency-inversion consequence.
+    "crates/bin/rpi-platform",
+    "crates/bin/rpi",
+    "crates/lib-security",
+    # The rustls glue layer for the device-hosted MQTT broker's TLS leg (ADR 0013 §1, WP-3):
+    # `CryptoProvider`/`TimeProvider`/pinned-SPKI `ClientCertVerifier`/`TlsServerStage`, written
+    # against the `lib-security` TRAIT seam only (never a chip). `no_std` + `alloc` — the one crate
+    # in this workspace that concedes a heap, per ADR 0013 §3. Currently a fail-closed STUB: every
+    # entry point returns `SecurityError::Unimplemented`, so nothing can negotiate a session.
+    "crates/lib-tls",
+    # The consolidated network layer (#287): the host publish targets (mesh + locate) plus the
+    # no_std owned-net MCU stack (channel + link + the embassy-net spike), folded into feature-gated
+    # modules. Replaces the former lib-mesh/lib-locate/lib-link/lib-channel/lib-net-embassy crates.
+    "crates/lib-net",
+    # Lightweight no_std on-target profiler (EPIC #350, story #365): hotpath-like API
+    # (measure_block! macro + per-span aggregation) with pluggable backend traits.
+    # Feature-gated, zero-cost when off. No embassy-time dep; clock and sink are abstract.
+    "crates/lib-profile",
+    "crates/test-kit",
+    "crates/test-e2e",
+    "crates/test-acceptance",
+    # The Pico Seplos BMS pack-emulator's pure protocol logic (hil/pico-seplos-emu, the HIL bench,
+    # phase 1). Zero embassy/hardware deps, no_std, builds for host + thumbv6m-none-eabi — same
+    # "colocated with the MCU app, but host-buildable" pattern as bin-mcu-platform above. The
+    # firmware bin itself (hil/pico-seplos-emu) is excluded below, same split as bin/mcu-rp2350.
+    "hil/pico-seplos-emu-core",
+]
+exclude = [
+    # The TMS IDL code generator — a host-only build tool (nom/quote/proc-macro2). Excluded so its
+    # parser/emitter deps NEVER enter the firmware graph, the workspace lock, or the cargo-vet
+    # surface. Verified with `cargo tree -p lib-tms` (no nom/quote). Built via `just tms-codegen`.
+    "tools/tms-idl-codegen",
+    # The Pico Seplos BMS pack-emulator FIRMWARE (embassy-rp, cortex-m-rt, thumbv6m-none-eabi) —
+    # its own toolchain/target, own Cargo.lock, never `cargo build --workspace`. Mirrors bin/mcu-rp2350
+    # exactly. Its pure-logic sibling (hil/pico-seplos-emu-core) IS a workspace member, above.
+    "hil/pico-seplos-emu",
+    # The RP2350 (Cortex-M33) MCU shipping binary workspace (EPIC #350, story S1 #352), replacing
+    # the retired Zephyr MCU path (bin/zephyr). Own toolchain/target (thumbv8m.main-none-eabihf),
+    # own Cargo.lock, own embassy 0.10-era pins (embassy-rp 0.10, embassy-time 0.5.1) — a SECOND,
+    # incompatible embassy-time pin from this workspace's `embassy-time = "0.4"` below, which
+    # `embassy-time-driver`'s `links = "embassy-time"` key forbids mixing into one graph. Mirrors
+    # hil/pico-seplos-emu's own excluded-workspace pattern above.
+    "crates/bin/mcu-rp2350",
+]
+
+[workspace.package]
+version = "0.2.3"
+edition = "2021"
+# SPDX-valid custom-license reference (was "Proprietary", which is not a valid SPDX expression and
+# tripped cargo-deny's license check). Same meaning: closed-source, all rights reserved.
+license = "LicenseRef-Proprietary"
+authors = ["High Velocity Decisions <john@highvelocitydecisions.com>"]
+repository = "https://github.com/highvelocitydecisions/sentient-rs"
+rust-version = "1.91"
+
+[workspace.dependencies]
+# Pure-core deps (no_std-friendly)
+bytes = { version = "1.7", default-features = false }
+# 0.9 is already in-tree transitively (smoltcp's MSRV driver); pinning the workspace to 0.9 here
+# dedupes the 0.8/0.9 split cargo-deny flagged (see deny.toml [bans] notes).
+heapless = "0.9"
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+# no_std + no-alloc JSON for the TMS codec (works on the MCU forward path).
+serde-json-core = "0.6"
+# Shortest-round-trip float formatting for `JsonSink::f32`/`f64` (`lib-mapping`'s `CountingSink`/
+# `WriteSink`, `lib_tms::fields::JsonSink`) — no_std/no-alloc by default (no features to disable),
+# already in-tree transitively via serde-json-core's own ryu dep.
+ryu = "1.0"
+
+# I/O + host deps
+serialport = "4.5"
+tokio = { version = "1.40", features = ["full"] }
+# DDS/RTPS (MIL-STD-3071) transport backend for the Pi (`lib-dds`, service layer, std-only). Pinned:
+# the whole 5-crate tree (dust_dds, dust_dds_derive, md5, network-interface, xml-rs) is vet-exempted,
+# so the version is a reviewed, ratcheted decision (WP0 bake-off winner). Also a `lib-mapping` dev-dep
+# (the XCDR2 byte-oracle reference).
+dust_dds = "=0.15.0"
+# socket2 backs `lib-net`'s `embassy::udp` host shim (feature `embassy-udp-host`) — the owned UDP/IPv6
+# transport seam lib-dds's custom TransportParticipantFactory consumes (moved out of lib-dds so the
+# transport lives behind the owned net layer, not as raw sockets in the DDS crate).
+socket2 = { version = "0.5", features = ["all"] }
+# Embedded MQTT server (rumqttd) in the binary hosts the device's TMS data; an external mosquitto
+# bridge subscribes to it and relays to cloud/Greengrass (mosquitto.conf). rumqttc = test/mock client.
+rumqttd = "0.19"
+rumqttc = "0.24"
+# Logging: the `log` crate is the portable facade used by all crates (no_std-capable). Each binary
+# installs a backend — env_logger on the RPi, defmt-rtt (RTT-only) on the MCU (bin/mcu-rp2350).
+log = "0.4"
+env_logger = "0.11"
+figment = { version = "0.10", features = ["toml", "env"] }
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Test deps
+proptest = "1.5"
+nix = "0.29"
+serial_test = "3"
+insta = "1"
+
+# --- embassy MCU platform (forward path; built for the MCU target, not the host cargo build) ---
+tokio-serial = "5.4"
+# Pinned for lib-net's embassy-net 0.9.1 owned-stack (`lib_net::embassy`, feature `embassy`) —
+# bumped 0.4 -> 0.5 (EPIC #350, story S8 #359) so this workspace's embassy generation matches
+# bin/mcu-rp2350's (embassy-rp 0.10 / embassy-time 0.5.1), letting bin/mcu-rp2350 consume lib-net's embassy
+# seam directly rather than forking bespoke net/broker glue. lib-io stays embassy-version-free (its
+# `EmbassyUart<U, D, T>` takes a generic `T: embedded_hal_async::delay::DelayNs`, not a concrete
+# `embassy_time::Timer`). `embassy-time-driver` carries `links = "embassy-time"`, so Cargo enforces
+# exactly ONE version across the whole workspace graph — this 0.5 is that one version. bin/mcu-rp2350
+# remains a SEPARATE excluded workspace with its own Cargo.lock pinning `embassy-time = "0.5.1"`
+# (a `^0.5` match), so the two resolver graphs agree on the generation.
+embassy-time = "0.5"
+embedded-io-async = "0.6"
+embedded-hal = "1.0"
+
+# systemd Type=notify watchdog + readiness (host only).
+sd-notify = "0.4"
+
+# Security / crypto seam
+# (default-features = false mirrored here: each is single-consumer (lib-security) with
+# default features off there, and Cargo's workspace-inheritance unifies default-features across
+# the workspace declaration too — an unset/true root entry would silently re-enable them.)
+zeroize = { version = "1.8", default-features = false }
+wolfssl-wolfcrypt = { version = "2.0", default-features = false }
+digest = { version = "0.11", default-features = false }
+signature = { version = "2", default-features = false }
+rand_core = { version = "0.10", default-features = false }
+rstest = { version = "0.23", default-features = false }
+# Software crypto backend (`lib-security`, feature `software`, default ON): pure-Rust ECDSA
+# P-256, no_std/no_alloc-capable (default-features off — no "std"/"alloc"/"getrandom"; keys never
+# leave this crate's arena). `ecdsa` pulls in the RustCrypto `ecdsa` crate's `SigningKey`/
+# `VerifyingKey` types (re-exported at `p256::ecdsa`); it resolves its OWN `signature`/`rand_core`
+# majors (signature 3.x, rand_core 0.10 — matching the `rand_core = "0.10"` pin above, so no extra
+# rand_core major is introduced) independent of the `signature = "2"` pin above, which is scoped to
+# the wolfCrypt backend's older trait-version requirement — see that dependency's comment.
+p256 = { version = "0.14", default-features = false, features = ["ecdsa"] }
+# `lib-security`'s SOFTWARE-tier `SessionCipher` (AES-256-GCM, RustCrypto `aes-gcm`). Pinned to the
+# 0.10 line deliberately, NOT the newer 0.11 hybrid-array generation: 0.10's `AeadInPlace` trait
+# operates on a plain `buffer: &mut [u8]` (see `aead` 0.5's `encrypt_in_place_detached`/
+# `decrypt_in_place_detached`), which is exactly this crate's in-place, no_std, no-alloc contract;
+# 0.11 replaced that with an `InOutBuf`-based `AeadInOut` API this codebase does not yet need.
+# `aes-gcm` is otherwise a leaf dependency (aead/aes/cipher/ctr/ghash/subtle) independent of the
+# `digest`/`signature`/`p256` pins above — no shared-major conflict. `default-features = false` per
+# the workspace-inheritance rationale above: this pulls in only "aes" (the block cipher) — no
+# "alloc" (no_alloc discipline), no "getrandom" (keys are drawn through this crate's own `Rng` seam,
+# never `aes-gcm`'s own convenience `generate_key`/`OsRng` path).
+aes-gcm = { version = "0.10", default-features = false, features = ["aes"] }
+
+# Channel / link layer (same default-features = false rationale as above)
+postcard = { version = "1.0", default-features = false }
+smoltcp = { version = "0.13", default-features = false }
+pnet_datalink = "0.35"
+# TLS record layer for `lib-link::tls::TlsStage` (non-FIPS tier, `ring` provider). Pinned to
+# 0.22 — NOT 0.23 — because 0.22.x is already in the tree transitively (tokio-rustls 0.25 ->
+# rumqttc 0.24's dev-dependency chain); using 0.23 would add a THIRD rustls major version and trip
+# cargo-deny's duplicate-version bans. 0.22 adds no new rustls version at all. Unlike 0.23, 0.22 has
+# no `std`/`alloc` cargo features to select (it predates rustls's no_std support) — `ring` + `tls12`
+# are its defaults (along with `logging`), so this just states them explicitly.
+rustls = { version = "0.22", default-features = false, features = ["ring", "tls12"] }
+# Ephemeral TLS bring-up/test identity generation — `test-kit` only (see its Cargo.toml comment
+# and `docs/security.md`'s rotation note for the committed private key this replaces). `ring`
+# backend (not 0.13's default `aws_lc_rs`) so this doesn't add a second TLS crypto backend
+# alongside the `ring`-backed `rustls` pin above; `default-features = false` is stated explicitly
+# per the workspace-inheritance rationale in the path-deps block below.
+rcgen = { version = "0.13", default-features = false, features = ["ring"] }
+
+# --- workspace-internal path deps (centralized here; members inherit via `workspace = true`) ---
+# default-features = false is stated EXPLICITLY (not left implicit) on the three that some members
+# override: Cargo silently ignores a member's `default-features` override (with a "could become a
+# hard error" warning) unless the workspace.dependencies entry also states default-features
+# explicitly, and (empirically) only a false->true override is honored, not true->false. `false`
+# here is the base, matching most consumers (lib-mapping, impl-app, the former
+# seplos-sim, lib-io's own dep on lib-parse); the minority of consumers that need default
+# features (lib-mqtt, bin-rpi, the mock/host dev-deps) opt back in with an explicit
+# `default-features = true` at their own call site — this is load-bearing for the no_std/MCU build.
+lib-parse = { path = "crates/lib-parse", default-features = false }
+# The generated MIL-STD-3071 (TMS) model + the vendor-neutral device model (siblings; neither
+# depends on the other — lib-mapping is the bridge).
+lib-tms = { path = "crates/lib-tms", default-features = false }
+lib-canonical = { path = "crates/lib-canonical", default-features = false }
+lib-store = { path = "crates/lib-store" }
+lib-mapping = { path = "crates/lib-mapping", default-features = false }
+lib-io = { path = "crates/lib-io", default-features = false }
+lib-security = { path = "crates/lib-security", default-features = false }
+# The rustls glue for the broker's TLS leg (ADR 0013). `default-features = false` stated
+# explicitly, same workspace-inheritance rationale as the block header above: the MCU consumer
+# (`crates/bin/mcu-rp2350/ns`, its own excluded workspace, feature `tls`) needs the bare `no_std`
+# seam, never a host/std tier. Depends on `lib-security`'s traits only — no chip, no veneer.
+lib-tls = { path = "crates/lib-tls", default-features = false }
+spec-app = { path = "crates/spec-app" }
+impl-app = { path = "crates/impl-app" }
+bin-rpi-platform = { path = "crates/bin/rpi-platform" }
+lib-mqtt = { path = "crates/lib-mqtt" }
+lib-dds = { path = "crates/lib-dds" }
+# The consolidated network layer (#287). default-features = false (default is `[]` anyway) — every
+# consumer opts into exactly the modules it needs: `host` (mesh + locate) for the RPi publish
+# targets, `link`/`tls`/`link-host` for the owned-net stack, `embassy`/`packed` for the MCU spike
+# + IPC codec. The no_std MCU build enables `link,embassy` with `--no-default-features`.
+lib-net = { path = "crates/lib-net", default-features = false }
+# Consolidated test-support + cross-crate e2e crates (#99) — retire sentient-net-testkit +
+# seplos-sim + lib-mqtt/tests/support into test-kit; retire the scattered
+# lib-mqtt/lib-link/lib-io e2e tests into test-e2e. Both std/host-only,
+# publish = false, never a dependency of the no_std MCU build.
+test-kit = { path = "crates/test-kit" }
+test-e2e = { path = "crates/test-e2e" }
+# RS-485 GPIO DE/RE direction control (gap-analysis "RS-485 direction control mechanism" finding) —
+# consumed by lib-io behind its `host` feature (`DirectionMode::GpioDe`, host/gpio_de.rs).
+gpiocdev = "0.7"
+
+# --- Vendored dust_dds fork (XCDR2 rule-(12) NEXTINT fix) -----------------------------------------
+# dust_dds 0.15.0's Xcdr2Serializer omits the NEXTINT/DHEADER byte-length delimiter that DDS-XTypes
+# 1.3 §7.4.3.5.3 rule (12) mandates before a sequence of NON-primitive elements; CycloneDDS 11.0.1
+# REQUIRES it and rejects our telemetry (e.g. DcMeasurementUpdate) without it (empirical, WP7a
+# harness). We consume the pristine 0.15.0 crate from `vendor/` with the smallest possible surgical
+# patch (serializer emits + deserializer consumes the delimiter for XCDR2 only; CDR1/PL_CDR wire
+# forms byte-unchanged). Provenance, diff rationale, spec citation + upstream-dispute links:
+# vendor/dust_dds/PATCHES.md. Consumed as a [patch.crates-io] PATH override so the whole tree still
+# reads as the crates.io `dust_dds = "=0.15.0"` dep (deny.toml `unknown-git = "deny"` forbids a git
+# source; a path patch keeps the source registry-clean). Drop when the fix lands upstream (PR draft
+# in .scratch/dust-dds-upstream-pr.md → github.com/s2e-systems/dust-dds).
+[patch.crates-io]
+dust_dds = { path = "vendor/dust_dds" }
+dust_dds_derive = { path = "vendor/dust_dds_derive" }
+
+# Production posture: no unwrap/expect/panic in logic. Test code opts out with scoped
+# `#[allow]`s; the gate is `cargo clippy --workspace --all-targets -- -D warnings`.
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Optimized build that KEEPS debug symbols (the release profile strips them). The release pipeline
+# builds this to produce the unstripped `.elf` artifact, then strips a copy for the shippable
+# binary — same optimized code, one with symbols for debugging/symbolication and one lean to run.
+[profile.profiling]
+inherits = "release"
+# Speed, not size — this is the RPi deliverable and the Pi has RAM/flash to spare, unlike the 64 KB
+# MCU (whose size-sensitive `release` profile keeps `opt-level = "z"`). `release` inherits `"z"`,
+# which suppresses inlining AND aarch64 NEON autovectorization of the render/serialize hot path;
+# `opt-level = 3` restores both. Measured on the Cortex-A53 bench (Pi Zero 2 W): the flat-wire render
+# path (`emit_reading`/`publish_rendered_tapped`) drops ~25% (e.g. 20.2→14.8 µs, 17.0→12.9 µs).
+# Portable across the shipping cores — A72 (Pi 4) and A76 (Pi 5) also gain from NEON+inlining; kept
+# generic (no `-C target-cpu`) deliberately so one aarch64-musl binary tunes for none of the three at
+# the expense of the others. Cost: a larger binary (irrelevant on the Pi image).
+opt-level = 3
+debug = true
+strip = false
+split-debuginfo = "packed"
+# Trap integer overflow in the shipping host binary (release defaults to false → silent wrap). An
+# overflow becomes a controlled panic→abort (see panic="abort" above) + systemd restart, rather than
+# corrupt telemetry. Scoped to `profiling` (the RPi deliverable) so the size-sensitive MCU release
+# profile is unaffected. See docs/rust-hardening.md.
+overflow-checks = true

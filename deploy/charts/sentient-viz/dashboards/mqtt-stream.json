@@ -1,0 +1,137 @@
+{
+  "title": "MQTT Stream",
+  "uid": "sentient-mqtt-stream",
+  "tags": ["sentient", "mqtt", "raw"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "graphTooltip": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "topic",
+        "label": "Topic",
+        "type": "query",
+        "datasource": { "type": "influxdb", "uid": "influxdb-telemetry" },
+        "query": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: v.defaultBucket, tag: \"topic\", predicate: (r) => r._measurement == \"mqtt_raw\", start: -24h)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": ["All"], "value": ["$__all"] },
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Raw MQTT messages",
+      "description": "Verbatim tail of tms/#, legacy/#, status/# from the mqtt_raw wire capture — no json_v2 parsing, so this is exactly what was published. The single MQTT connection now carries the 1 Hz heartbeat too; use the Topic variable above to filter it out and focus on the interesting rows.",
+      "datasource": { "type": "influxdb", "uid": "influxdb-telemetry" },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "topic" },
+            "properties": [{ "id": "custom.width", "value": 260 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "payload" },
+            "properties": [
+              { "id": "custom.width", "value": 700 },
+              { "id": "custom.cellOptions", "value": { "type": "auto", "wrapText": true } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "Time", "desc": true }]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mqtt_raw\" and r._field == \"value\" and r.topic =~ /${topic:regex}/)\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 200)\n  |> keep(columns: [\"_time\", \"topic\", \"_value\"])\n  |> rename(columns: {_time: \"Time\", _value: \"payload\"})"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Message rate by topic",
+      "description": "Messages per window on each MQTT topic, from the mqtt_raw wire capture. Respects the Topic variable above.",
+      "datasource": { "type": "influxdb", "uid": "influxdb-telemetry" },
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "displayName": "${__field.labels.topic}",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mqtt_raw\" and r._field == \"value\" and r.topic =~ /${topic:regex}/)\n  |> group(columns: [\"topic\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: count, createEmpty: false)"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Messages (last 1 m)",
+      "description": "Raw MQTT messages captured across all topics in the last minute (ignores the Topic variable — always a whole-connection total). ~30 is healthy (1 msg/2s, now including the 1 Hz heartbeat). 0 means the consumer or broker is down.",
+      "datasource": { "type": "influxdb", "uid": "influxdb-telemetry" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "displayName": "messages/min",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.defaultBucket)\n  |> range(start: -1m)\n  |> filter(fn: (r) => r._measurement == \"mqtt_raw\" and r._field == \"value\")\n  |> group()\n  |> count()"
+        }
+      ]
+    }
+  ]
+}

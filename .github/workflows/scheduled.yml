@@ -1,0 +1,83 @@
+name: Scheduled
+
+# Long-running hardening jobs that don't belong on the PR path: mutation testing (slow) and fuzzing
+# (time-boxed but still too slow to gate every PR). Runs weekly + on-demand via workflow_dispatch.
+# Not part of ci.yml's `needs:` graph — both jobs are independent of each other and of lint.
+
+on:
+  schedule:
+    - cron: '0 3 * * 1' # weekly, Monday 03:00 UTC
+  workflow_dispatch: {}
+
+# Serialize (do NOT cancel-in-progress): mutants can run up to 180 minutes — a manual dispatch
+# should queue behind a running scheduled pass, not kill hours of in-flight mutation testing.
+concurrency:
+  group: scheduled-${{ github.ref }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  mutants:
+    name: cargo-mutants (safety-critical crates)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: just mutants
+        run: just mutants
+
+  fuzz:
+    name: cargo-fuzz (Seplos frame parser)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Install nightly + cargo-fuzz
+        run: |
+          rustup toolchain install nightly
+          cargo install cargo-fuzz --locked
+
+      # The cargo-fuzz crate lives at test-e2e/fuzz/ (#99 — grouped with the other test
+      # artifacts under the e2e crate); `just fuzz` cd's there before invoking cargo-fuzz.
+      - name: just fuzz
+        run: just fuzz
+
+  miri:
+    name: cargo-miri (broker-pump aliasing oracle)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # Weekly, not a PR gate — the sentient-builder image is single-toolchain 1.91, so nightly is
+      # installed per-run (`just miri` itself runs `rustup toolchain install nightly --component
+      # miri`), exactly like the fuzz job above installs its own nightly + cargo-fuzz. Stacked-
+      # Borrows oracle for the firmware broker-pump static-mut aliasing pattern (see
+      # crates/lib-link/tests/broker_pump_aliasing_miri.rs).
+      - name: just miri
+        run: just miri

@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-greengrass-bridge
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: greengrass-bridge
+data:
+  # The Green Grass Bridge: a mosquitto instance that PULLS the Greengrass-bound
+  # telemetry/# namespace off the device broker, exactly like the on-Pi relay
+  # (distro/deploy/mosquitto.conf Bridge 1 + the rendered greengrass-relay leg) would
+  # feed an AWS IoT Greengrass core — minus the outbound mTLS leg. Everything on this
+  # broker IS "what would be sent to Greengrass"; Telegraf subscribes here and Grafana
+  # renders it for parity against the device-direct TMS stream. (The on-Pi relay also
+  # pulls tms/# for the private-cloud leg; deliberately not mirrored — it would blur
+  # the parity view.) Keep in sync with deploy/compose/configs/greengrass-bridge.conf.
+  mosquitto.conf: |
+    # Demo listener for Telegraf (plaintext/no-auth like the demo rumqttd broker — see
+    # networkPolicy.enabled for the mitigation). The on-Pi relay instead runs
+    # listener-less (unix-socket only); this instance must serve subscribers.
+    listener 1883
+    allow_anonymous true
+
+    # No persistence: nothing on this broker is worth surviving a restart, and the
+    # config volume is mounted read-only.
+    persistence false
+    log_dest stdout
+
+    # The bridge — read the device's embedded rumqttd broker (pull the Greengrass-bound
+    # namespace off the device).
+    connection device-broker
+    address {{ include "sentient-viz.fullname" . }}-app:{{ .Values.app.brokerPort }}
+    # `in` = subscribe (bring device topics into this mosquitto). QoS 1 — same topic/QoS
+    # the rendered greengrass-relay block bridges out (`topic telemetry/# out 1`).
+    topic telemetry/# in 1
+    bridge_protocol_version mqttv311
+    # rumqttd is not mosquitto: it rejects the private-bridge CONNECT variant (protocol
+    # level 0x84) that try_private (default true) sends, closing the connection —
+    # connect as a plain MQTT 3.1.1 client instead.
+    try_private false
+    remote_clientid greengrass-bridge
+    # Demo divergence from the on-Pi relay's `cleansession false`: session persistence
+    # buys nothing here (Telegraf re-reads live data; persistence is off anyway).
+    cleansession true
+    # Publish the bridge's connection state ONLY on this local broker (retained "1"/"0"
+    # at the pinned topic below) — never onto the device's rumqttd. Telegraf turns it
+    # into the greengrass_bridge_state measurement for the dashboard's "bridge up" stat.
+    notifications_local_only true
+    notification_topic $SYS/broker/connection/device-broker/state

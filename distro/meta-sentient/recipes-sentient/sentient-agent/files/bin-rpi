@@ -1,0 +1,10 @@
+This is a GREENFIELD PLACEHOLDER, not a real binary.
+
+TODO(verify-at-build): CI wires the real signed aarch64-unknown-linux-musl bin-rpi artifact
+from release.yml into sentient-agent_0.1.0.bb's SRC_URI (see Sub-task 2, "musl-static
+release artifact", in the approved plan). This placeholder exists only so the recipe
+skeleton's SRC_URI/do_install reference a concrete file and the layer is syntactically
+self-documenting before that CI wiring lands. A real BitBake run must NOT ship this file —
+either replace it before first build or make it fail loudly (e.g. a do_install sanity check
+on file size/magic) so an accidental image build cannot silently boot with a non-binary
+placeholder in ${bindir}/bin-rpi.

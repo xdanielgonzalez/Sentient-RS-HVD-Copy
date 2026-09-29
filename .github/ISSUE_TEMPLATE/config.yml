@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/High-Velocity-Decisions/sentient-rs/security/advisories/new
+    about: Please do not open a public issue for a suspected vulnerability. See SECURITY.md and use private reporting instead.
+  - name: Project documentation
+    url: https://github.com/High-Velocity-Decisions/sentient-rs/blob/main/docs/README.md
+    about: General questions about architecture, deployment, or TMS compliance may already be answered here.

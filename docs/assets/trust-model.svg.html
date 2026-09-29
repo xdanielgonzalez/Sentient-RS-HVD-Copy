@@ -1,0 +1,33 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:8px;background:#fff}</style></head><body>
+<svg viewBox="0 0 720 320" width="720" height="320" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs><marker id="arw" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="#2f5688"/></marker></defs>
+  <text x="180" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#1f3a5f">BUILD TIME</text>
+  <text x="180" y="40" text-anchor="middle" font-size="9" fill="#5c6672">off-device</text>
+  <text x="545" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#1f3a5f">DEVICE TIME</text>
+  <text x="545" y="40" text-anchor="middle" font-size="9" fill="#5c6672">on-device — Raspberry Pi</text>
+  <line x1="360" y1="12" x2="360" y2="300" stroke="#d5dbe1" stroke-width="1" stroke-dasharray="4 4"/>
+  <rect x="40" y="56" width="280" height="70" rx="5" fill="#f4f6f8" stroke="#2f5688" stroke-width="1.3"/>
+  <text x="52" y="74" font-size="10" font-weight="700" fill="#1f3a5f">Signing-key custody</text>
+  <text x="52" y="92" font-size="9" fill="#33404d">Vault Transit  (automated CI)</text>
+  <text x="52" y="107" font-size="9" fill="#33404d">YubiKey 5 FIPS  (air-gapped, manual)</text>
+  <text x="52" y="120" font-size="8" fill="#5c6672" font-style="italic">key never on a build host or in CI</text>
+  <rect x="40" y="164" width="280" height="46" rx="5" fill="#1f3a5f"/>
+  <text x="180" y="184" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">Release binary + signature</text>
+  <text x="180" y="200" text-anchor="middle" font-size="8.5" fill="#c9d6e6">SHA256SUMS.cosign.bundle</text>
+  <line x1="180" y1="126" x2="180" y2="162" stroke="#2f5688" stroke-width="1.5" marker-end="url(#arw)"/>
+  <text x="188" y="148" font-size="8" fill="#5c6672">signs</text>
+  <rect x="400" y="56" width="285" height="86" rx="5" fill="#f4f6f8" stroke="#2f5688" stroke-width="1.3"/>
+  <text x="412" y="74" font-size="10" font-weight="700" fill="#1f3a5f">SLB9672 SPI TPM 2.0 — key protection</text>
+  <text x="412" y="91" font-size="9" fill="#33404d">• LUKS data-key seal</text>
+  <text x="412" y="106" font-size="9" fill="#33404d">• TLS client key (tpm2-pkcs11)</text>
+  <text x="412" y="121" font-size="9" fill="#33404d">• device identity key</text>
+  <text x="412" y="136" font-size="8" fill="#5c6672" font-style="italic">non-exfiltrable off a captured device</text>
+  <rect x="400" y="164" width="285" height="46" rx="5" fill="#ffffff" stroke="#2f5688" stroke-width="1.3"/>
+  <text x="542" y="184" text-anchor="middle" font-size="10" font-weight="700" fill="#1f3a5f">On-device verify</text>
+  <text x="542" y="200" text-anchor="middle" font-size="8.5" fill="#33404d">cosign / openssl cms — execute only if valid</text>
+  <line x1="320" y1="187" x2="398" y2="187" stroke="#2f5688" stroke-width="1.5" marker-end="url(#arw)"/>
+  <rect x="400" y="238" width="285" height="52" rx="5" fill="#eef2f6" stroke="#b7791f" stroke-width="1.2"/>
+  <text x="542" y="257" text-anchor="middle" font-size="9.5" font-weight="700" fill="#1f3a5f">Verified boot — SIGNED_BOOT + dm-verity</text>
+  <text x="542" y="273" text-anchor="middle" font-size="8.5" fill="#b7791f" font-weight="600">LOCAL ENFORCEMENT — NOT ATTESTATION</text>
+  <line x1="542" y1="210" x2="542" y2="236" stroke="#2f5688" stroke-width="1.5" marker-end="url(#arw)"/>
+</svg></body></html>

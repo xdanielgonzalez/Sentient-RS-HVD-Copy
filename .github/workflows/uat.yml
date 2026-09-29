@@ -1,0 +1,92 @@
+name: UAT
+
+# Post-merge DELIVERY gate — runs on EVERY push to main (after a PR merges). Thin orchestrator,
+# ci.yml-style: each lane below imports a reusable workflow (`_*.yml`) that owns the actual steps,
+# so `needs:` gating still works across the split (reusable-workflow jobs are still jobs of THIS
+# workflow, so the graph holds).
+#
+# SCOPE — DELIVERY, NOT DEPLOYMENT (#377). Every lane here answers one question: is the artifact we
+# are about to cut a release from healthy? Environment deployments do NOT belong in this workflow:
+# their failure modes are infrastructure (helm/k3s/Harbor/MinIO/node capacity) and a red there says
+# nothing about delivery health, but it used to turn this whole run red and mask it. The viz stack's
+# helm deploy therefore lives in its own workflow, `viz-deploy.yml`, with its own trigger + its own
+# concurrency group. Keep it that way — new environment-deploy lanes go there (or their own file),
+# not here.
+#
+#   uat      -> _uat-qemu.yml   builds the aarch64-musl bin-rpi, wraps it in a fresh
+#               sentient-app-sysext, merges it into the downloaded GOLDEN base image, boots under
+#               runqemu, and validates (sysext merged + agent started + Robot e2e when the #156
+#               suites exist). Full architecture story in that file's header.
+#   mcu      -> _mcu-build.yml  cross-builds the MCU firmware chip matrix (RP2350 today) and
+#               publishes each chip's ELF(s) as a build artifact for HIL/inspection. ADVISORY:
+#               `promote` does not need it — the MCU path already has its own hard gate (the `bench`
+#               lane's stack-size check below); this lane is about ARTIFACT PUBLISHING, not another
+#               regression gate.
+#   promote  -> inline below    auto-cuts a production release candidate when the `uat` lane clears.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Serialize UAT on main; do not cancel-in-progress (merges queue rather than race).
+concurrency:
+  group: uat-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  uat:
+    name: qemu UAT
+    uses: ./.github/workflows/_uat-qemu.yml
+    secrets: inherit
+
+  # Publishes the MCU firmware chip matrix's ELF(s) as build artifacts (mcu-firmware-<chip>) so a
+  # post-merge main build always has a fresh HIL/inspection artifact — same trigger (push to main),
+  # unconditional like the other lanes here (neither `uat` nor `bench` path-filters either).
+  mcu:
+    name: MCU firmware
+    uses: ./.github/workflows/_mcu-build.yml
+    secrets: inherit
+
+  # PRE-RELEASE BENCH LANE — HARD-gates the auto-cut on a no_std MCU stack-size regression
+  # (`just stack-sizes` inside _bench.yml); the hotpath perf trend (`just bench-check`) is ADVISORY
+  # there — see _bench.yml's header for the split rationale. `promote` waits on this lane too.
+  bench:
+    name: bench (stack-size gate)
+    uses: ./.github/workflows/_bench.yml
+    secrets: inherit
+
+  # AUTO-CUT a production release when UAT clears. Runs only after the `uat` lane succeeds (needs:)
+  # and only on a real merge (push to main), never a manual uat dispatch. Dispatches production.yml
+  # with publish=true + a CalVer version — production.yml builds + CMS-signs everything and softprops
+  # publishes the release AND creates the tag vYYYY.MMDD.<run_id>. We use workflow_dispatch (not a
+  # token-pushed tag) because a tag pushed by GITHUB_TOKEN would NOT trigger production.yml; a dispatch
+  # does, even under GITHUB_TOKEN. No loop: the tag softprops creates is itself GITHUB_TOKEN-made, so it
+  # doesn't re-trigger production, and uat.yml triggers on branch pushes, not tags.
+  promote:
+    name: auto-cut release (UAT cleared)
+    needs: [uat, bench]
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write   # dispatch production.yml
+    steps:
+      - name: Dispatch production.yml (publish) with a CalVer version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # CalVer vYYYY.MMDD.<run_id> — sortable, unambiguous, matches production.yml's `v*.*.*` gate.
+          VERSION="$(date -u +%Y.%m%d).${RUN_ID}"
+          echo "::notice::UAT cleared on ${SHA} — auto-cutting v${VERSION} via production.yml (publish)"
+          # production.yml builds main's CURRENT HEAD (dispatch takes a ref, not a sha); on a fast main
+          # that is the tested commit. It then CMS-signs + publishes the release and creates the tag.
+          gh workflow run production.yml --repo "$REPO" --ref main \
+            -f publish=true -f version="$VERSION"

@@ -1,0 +1,152 @@
+name: _supply-chain (reusable)
+
+# Reusable workflow: Stage-1 hardening jobs that run parallel to lint — cargo-audit/cargo-deny/
+# cargo-vet and zizmor's static analysis of the workflows themselves. Called only via `workflow_call`.
+
+# No secrets: the shared setup action only wires the NFS-backed sccache env (no MinIO cache
+# creds needed since the S3 target/ cache was dropped — see .github/actions/setup).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  supply-chain:
+    name: cargo-audit · cargo-deny · cargo-vet
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # cargo-audit/cargo-deny/cargo-vet are baked into sentient-builder.
+      # `just vet` runs `cargo vet --locked`, which reads the committed supply-chain/imports.lock
+      # instead of refetching the google/mozilla/bytecode-alliance audit pools over the network.
+      - name: just supply-chain
+        run: just supply-chain
+
+      # The gate above is the red/green verdict. Now PRODUCE the same tools' findings as
+      # machine-readable evidence (JSON) and UPLOAD it — the security gates emit results, not just a
+      # pass/fail. `if: always()` so a FAILED gate still uploads the report that explains why. The
+      # recipe is non-fatal, so this step never changes the job's outcome (the gate already decided it).
+      - name: Collect security-gate evidence
+        if: always()
+        run: just security-report
+
+      - name: Upload security-gate reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: security-gate-reports
+          path: target/security-reports/
+          if-no-files-found: warn
+
+      - name: Security-gate summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Security gates — supply chain (evidence)"
+            echo
+            echo "Gate verdict = the \`just supply-chain\` step (cargo-audit · cargo-deny · cargo-vet) above."
+            echo
+            echo "Machine-readable findings uploaded as artifact **security-gate-reports**:"
+            for f in cargo-audit.json cargo-deny.jsonl; do
+              p="target/security-reports/$f"
+              if [ -s "$p" ]; then
+                echo "- \`$f\` ($(wc -c < "$p" | tr -d ' ') bytes)"
+              else
+                echo "- \`$f\` — _not produced_"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # cargo-geiger — unsafe-surface visibility across the workspace + full dependency tree. ADVISORY,
+  # NOT a gate (docs/rust-hardening.md): `continue-on-error` + the recipe's own `|| true` mean a
+  # noisy or failed scan never blocks a PR. It still PRODUCES + UPLOADS a report every run, so the
+  # unsafe surface is reviewable (evidence, like the SBOM). cargo-geiger is baked into sentient-builder,
+  # so this job just runs the recipe — no per-run install.
+  unsafe-surface:
+    name: cargo-geiger (unsafe surface · advisory)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 30
+    # Advisory: a geiger failure (install hiccup / noisy scan) must never fail the security stage.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: just geiger-report
+        run: just geiger-report
+
+      - name: Upload unsafe-surface report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsafe-surface-report
+          path: target/security-reports/
+          if-no-files-found: warn
+
+      - name: Unsafe-surface summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## cargo-geiger — unsafe surface (advisory)"
+            echo
+            if [ -s target/security-reports/cargo-geiger.md ]; then
+              echo "Full report uploaded as artifact **unsafe-surface-report** (cargo-geiger.json + cargo-geiger.md)."
+            else
+              echo "_cargo-geiger produced no report this run (advisory, non-gating)._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  workflow-audit:
+    name: zizmor
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # zizmor is baked into sentient-builder — no per-run cargo install.
+      - name: just zizmor
+        run: just zizmor
+
+  builder-image-pin-drift:
+    name: builder image digest pin drift
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      # No Setup/sccache needed — this step only resolves registry digests + greps/seds the
+      # committed Dockerfiles/workflows; it does not compile anything.
+      # --check exits non-zero if any FILES/BASE_WORKFLOWS/WORKFLOWS ref is not already pinned to
+      # the CURRENT digest (resolved via Harbor -> gh packages API -> GHCR, in that order) — gates
+      # drift between the pinned `container:`/`ARG BASE_IMAGE=` refs and what's actually published.
+      - name: update-build-sha.sh --check (digest pin drift)
+        run: .ci/update-build-sha.sh --check

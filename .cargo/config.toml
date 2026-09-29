@@ -1,0 +1,21 @@
+# Cargo config for sentient-rs.
+#
+# Mirrors the High-Velocity-Decisions local crate cache (kellnr) used across our repos
+# (cf. echelon-mesh): crates.io is served from the internal kellnr sparse mirror, rustup from the
+# internal mirror, and git deps fetch via the git CLI (so credential helpers / private repos work).
+# These hosts resolve on the HVD network; CI configures the same via the runner containers.
+
+[net]
+git-fetch-with-cli = true
+
+# Internal kellnr registry, proxying crates.io.
+[source.kellnr]
+registry = "sparse+http://rust-mirror:8000/api/v1/cratesio/"
+
+# Serve crates.io from the local cache.
+[source.crates-io]
+replace-with = "kellnr"
+
+# Internal rustup mirror for toolchain/target downloads.
+[rustup]
+mirror = "http://rust-mirror:8080"

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-sim
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sim
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "sim") | nindent 4 }}
+  ports:
+    - name: seplos
+      port: {{ .Values.sim.port }}
+      targetPort: seplos

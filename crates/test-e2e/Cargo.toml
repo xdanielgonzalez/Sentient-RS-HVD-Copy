@@ -1,0 +1,61 @@
+[package]
+publish = false            # test-only crate — never published, never a runtime dependency
+name = "test-e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Cross-crate / full-pipeline end-to-end tests for sentient-rs (#99), moved here from lib-mqtt/lib-link/lib-io so e2e coverage lives in one findable place. No library surface of its own — see tests/. Depends on every crate under test plus test-kit; std/host-only, never touches the no_std MCU build."
+
+[dev-dependencies]
+# `inverter` for `voltronic_inverter_e2e.rs`, which drives the real `impl_app::run_cycle_inverter`
+# poll loop.
+impl-app = { workspace = true, features = ["inverter"] }
+# The RPi platform impl (ADR 0009): `multi_port_e2e.rs`/`greengrass_sinkset_e2e.rs`/
+# `voltronic_inverter_e2e.rs` exercise the real `bin_rpi_platform::HostPlatform` seam (not a
+# hand-rolled `Platform` test double, unlike `e2e_l1.rs`/`mqtt_e2e.rs`) — this crate depends on
+# BOTH the policy (impl-app) and the adapter (bin-rpi-platform), unlike the adapter itself, which
+# depends on neither.
+bin-rpi-platform = { workspace = true }
+lib-io = { workspace = true, default-features = true, features = ["mock", "host"] }
+# The owned-net stack under test: lib-net's `link` module + `tls` record layer + identity seam.
+# `tls` implies `link` + `std`; `channel` (WireFrame) is always-on.
+lib-net = { workspace = true, features = ["tls"] }
+lib-mapping = { workspace = true, default-features = true }
+lib-mqtt = { workspace = true }
+# `seplos` for the fuzz-corpus-replay regression test + the L1 pty harness; `std` for host tests.
+lib-parse = { workspace = true, features = ["seplos", "voltronic", "std"] }
+lib-security = { workspace = true, default-features = true }
+# DDS/RTPS interop e2e (#325, WP7): the real `lib-dds` seam (dust_dds backend) + `lib-tms`'s
+# TmsTopicId/generated_qos/chain types, driven directly (mirrors `lib-dds/tests/dds_loopback.rs` and
+# `test-kit`'s `dds-probe` bin, extended here to a real spawned `bin-rpi` process). `dds-probe`
+# pulls in `test_kit::start_dds_probe`, the same one-line participant constructor the Rust `dds-probe`
+# bin uses.
+lib-dds = { workspace = true }
+lib-tms = { workspace = true }
+test-kit = { workspace = true, features = ["dds-probe"] }
+
+heapless = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+smoltcp = { workspace = true, default-features = false, features = [
+    "medium-ethernet",
+    "proto-ipv4",
+    "socket-tcp",
+] }
+rustls = { workspace = true }
+rumqttc = { workspace = true }
+rumqttd = { workspace = true }
+tokio = { workspace = true }
+# pty pairs for the L1 harness (mirrors the former lib-io/tests/host_pty.rs pattern). `signal` for
+# sigterm_drain_e2e.rs's real SIGTERM delivery to a spawned `bin-rpi` child process.
+nix = { workspace = true, features = ["term", "fs", "signal"] }
+# Snapshot-assert the mapped TMS JSON (e2e_l1.rs); `redactions` for masking volatile fields.
+insta = { workspace = true, features = ["json", "redactions"] }
+# Cross-binary/cross-invocation mutual exclusion for the pty + broker e2e tests — the same
+# `seplos_e2e` key used by the remaining lib-io/lib-mqtt component tests, so ALL
+# real-pty/real-broker tests in the workspace serialize against each other regardless of crate.
+serial_test = { workspace = true, features = ["file_locks"] }
+
+[lints]
+workspace = true

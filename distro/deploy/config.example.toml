@@ -1,0 +1,178 @@
+# distro/deploy/config.example.toml — deployment-ready sample for /etc/sentient/sentient.toml, WITH the
+# [cloud] section filled in as it would look once Sentient (#18) hands over the private-cloud
+# endpoint. Copy config/sentient.toml (the dev sample) as your starting point on a real device and
+# add the [cloud] block below once those values are known — nothing else changes.
+#
+# NOTHING in this file is secret. The bridge password is never a config field; it lives only in
+# /etc/sentient/cloud.env (see distro/deploy/cloud.env.example) as CLOUD_MQTT_PASS.
+#
+# Override any field via SENTIENT_ env vars (nested with `__`), e.g.
+#   SENTIENT_CLOUD__HOST=mqtt.sentient.example
+
+# --- RS-485 driver-enable (DE/RE) mechanism, process-wide fallback (#245). See
+# docs/decisions/0005-rs485-direction-mechanism.md. Used ONLY when a port's own
+# `[serial].direction` / `[[bus]].serial.direction` (below) is unset — a per-port `direction`
+# always wins over this default (see `SerialConfig::direction_mode`).
+# `direction` is a BARE top-level key (Config::direction: Option<DirectionCfg>, a plain enum, not
+# a sub-table), so — unlike every other section in this file — it MUST be placed here, before the
+# first `[section]` header ([device] immediately below): TOML attaches any bare `key = value` to
+# whichever `[table]` most recently opened, so this key cannot be moved further down the file
+# without also moving it into whatever table precedes it there.
+# direction = "rts"   # "rts" | "kernel"/"tiocsrs485" | "gpio" — see DirectionCfg's doc comment
+
+[device]
+id = "METEOR-001"
+# --- TMS DeviceInfo fields (gap-closure #237, decision 0003 — see docs/decisions/0003-tms-device-role-stor.md).
+# All optional/default-empty (or "STOR" for role); a pre-existing config with only `id` set above
+# keeps loading unchanged. PROVISIONAL: no reference/IDL was available to verify field names/
+# lengths against — see docs/tms-compliance.md's PROVISIONAL inventory.
+# role = "STOR"                    # TMS device role — this adapter is always a STOR power device
+#                                   # proxying the battery, never a passive MON (decision 0003);
+#                                   # changing this away from "STOR" is unsupported today.
+# manufacturer = "Sentient"        # ProductInfo.manufacturer
+# model = "METEOR-Comms"           # ProductInfo.model
+# serial_number = "SN-0001"        # ProductInfo.serial_number
+# firmware_version = "1.0.0"       # ProductInfo.firmware_version
+
+# --- Single-port [serial]/[poll] — the legacy pre-#238 shape, mutually exclusive with [[bus]] below.
+# `[serial]` is now Option (not mandatory): a config may set EITHER this section OR at least one
+# [[bus]] entry, never both (Config::buses fails loudly on either "both present" or "neither
+# present" — see docs/gap-analysis-meteor-parity.md's "Multi-port serial" finding and
+# docs/decisions/0004-multi-port-in-process.md). This is the right shape for a single-bus device.
+[serial]
+kind = "rs485"        # rs232 | rs485
+port = "/dev/ttyAMA0"
+baud = 19200
+parity = "none"       # none | even | odd
+stop_bits = 1
+read_timeout_ms = 1000   # per-exchange read deadline; a silent bus yields IoError::Timeout, not a hang
+# --- RS-485 driver-enable (DE/RE) mechanism (#245 — see docs/decisions/0005-rs485-direction-mechanism.md).
+# All optional; shown here at their defaults. Ignored for kind = "rs232". FIELD TASK: verify all
+# three mechanisms against the actual shipping HAT before relying on anything but the default —
+# see docs/deployment.md §2.1 and decision 0005's Consequences.
+# direction = "rts"               # "rts" (default, software RTS+drain) | "kernel"/"tiocsrs485" | "gpio"
+# gpio_chip = "gpiochip4"          # required when direction = "gpio"; bare name or "/dev/gpiochip4"
+# gpio_line = 22                  # required when direction = "gpio"
+# gpio_active_high = true         # whether asserting DE drives gpio_line high (default) or low
+# settle_tx_us = 5000             # delay after asserting DE, before writing (rts/gpio only)
+# settle_rx_us = 10000            # delay after the write completes, before deasserting DE
+# tx_drain = true                 # flush + tcdrain before dropping DE (rts only; default true)
+
+[poll]
+dip_addresses = [0]   # Seplos DIP addresses to poll each cycle
+interval_ms = 1000
+fault_every = 10      # poll 0x44 fault flags every N cycles (0 = never)
+
+# --- Multi-port [[bus]] array-of-tables (#238/#242 — see docs/decisions/0004-multi-port-in-process.md).
+# The N-port alternative to the single [serial]/[poll] pair above: one entry per physical bus,
+# each with its own name/serial/poll settings, all sharing the one embedded broker + device
+# identity. Mutually exclusive with [serial] above — uncomment this block AND remove/comment out
+# [serial]/[poll] to use it (do not do both).
+# [[bus]]
+# name = "pack-a"
+# serial = { kind = "rs485", port = "/dev/ttyAMA0", baud = 19200, read_timeout_ms = 1000 }
+# poll = { dip_addresses = [0], interval_ms = 1000, fault_every = 10 }
+#
+# [[bus]]
+# name = "pack-b"
+# serial = { kind = "rs485", port = "/dev/ttyAMA2", baud = 19200, read_timeout_ms = 1000 }
+# poll = { dip_addresses = [1], interval_ms = 1000, fault_every = 10 }
+
+[broker]
+# Loopback by default: only the local mosquitto bridge reads from this broker. Widen deliberately.
+host = "127.0.0.1"    # embedded MQTT server bind; mosquitto bridge connects here
+port = 1883
+
+[publish]
+prefix = "tms"        # topic prefix: {prefix}/{device_id}/{snake_case_topic}
+
+# --- Private-cloud bridge (fill in once Sentient (#18) provides these — see docs/deployment.md §9)
+[cloud]
+host = "mqtt.sentient.example"          # #18: the private-cloud MQTT broker hostname/IP
+port = 8883                             # #18: usually 8883 (MQTT over TLS); override if different
+username = "METEOR-001"                 # #18: the bridge username Sentient provisions for this device
+ca_file = "/etc/sentient/cloud-ca.pem"  # #18: Sentient's CA cert, installed separately (0600)
+# remote_clientid = "METEOR-001-bridge" # optional: explicit MQTT client id for the cloud connection
+# topic = "tms/#"                       # optional: defaults to "tms/#" if omitted
+# qos = 1                               # optional: defaults to 1 if omitted
+#
+# The password is NOT here — see /etc/sentient/cloud.env (CLOUD_MQTT_PASS), distro/deploy/cloud.env.example.
+
+# =============================================================================================
+# Secondary publish targets + location tagging (gap-closure #237) — every section below is
+# OPT-IN BY PRESENCE: absent entirely (the state every section is in by default in this example)
+# means that feature is off. Uncomment a whole section to turn it on; every field inside has the
+# default shown, so a bare `[section]` header with nothing else is a valid, minimal way to enable
+# a feature at its defaults.
+# =============================================================================================
+
+# --- Disk / JSON-lines telemetry logging (Scope A, #55-#57) --------------------------------------
+# Tails every published TMS payload to a rotating *.jsonl log on local storage — no network hop,
+# no broker required to be reachable, survives a reboot. See docs/modules/lib-persist.md and the
+# runbook docs/demo-disk-logging.md.
+# [disk]
+# dir = "/var/lib/sentient/telemetry"   # put this on the microSD-backed mount point in production
+# file_prefix = "tms"                   # -> tms.jsonl (active), tms.1.jsonl, tms.2.jsonl, ...
+# max_file_bytes = 10485760             # 10 MiB per file
+# max_files = 10                        # + 1 active = 11 files retained max
+# fsync_every_lines = 100
+# queue_depth = 256                     # channel depth between the poll loop and the writer task
+# full_probe_ms = 5000                  # re-probe cadence while disk-full/degraded
+
+# --- Meshtastic mesh-radio forwarding -------------------------------------------------------------
+# Greedy priority-ordered condensation (SOC, pack V, current, min/max cell, temps, then location)
+# over a hand-rolled Meshtastic wire frame — see docs/modules/lib-mesh.md and
+# docs/decisions/0006-meshtastic-protobuf-approach.md for the field-priority/protobuf-field-number
+# PROVISIONAL caveats (no reference prototype was available to verify them against). Field names
+# below match `crates/bin/rpi/src/config/types/meshtastic_config.rs` exactly (deny_unknown_fields —
+# an unrecognized key here fails config load loudly, not silently).
+# [meshtastic]
+# enabled = true                # explicit kill-switch within an already-present section
+# port = "/dev/ttyUSB1"         # serial device the Meshtastic radio is attached on
+# baud = 115200
+# channel = 0                   # Meshtastic channel index to send on (0 = primary channel)
+# max_bytes = 200                # on-air payload budget (the baseline's greedy condensation budget)
+# min_send_interval_ms = 30000  # LoRa duty-cycle friendliness: never key the radio more often than this
+
+# --- AWS Greengrass backwards-compat bridge (Scope D, #52-#54) -----------------------------------
+# Bridges flat legacy-JSON telemetry to an AWS IoT Greengrass core's local MQTT broker via a
+# second mosquitto bridge (mTLS — this device's own client certificate, not a username/password).
+# See docs/deployment.md §5 and distro/deploy/mosquitto.conf's Bridge 3. PROVISIONAL: the mTLS
+# field set mirrors [cloud]'s shape and remote_topic_prefix's real AWS-side scheme is a
+# best-effort guess — no reference AWS Greengrass bridge config was available; confirm against a
+# real Greengrass core's expected inbound topic namespace before this is load-bearing.
+# [greengrass]
+# host = "gg-core.local"                        # the Greengrass core's local MQTT broker host/IP
+# port = 8883
+# cert_file = "/etc/sentient/gg-cert.pem"       # this device's X.509 client certificate (mTLS)
+# key_file = "/etc/sentient/gg-key.pem"         # this device's X.509 private key, matching cert_file
+# ca_file = "/etc/sentient/gg-ca.pem"           # CA cert to validate the Greengrass core's TLS identity
+# remote_clientid = "METEOR-001-greengrass"     # optional: explicit MQTT client id for the bridge
+# local_topic = "telemetry/#"                   # local topic pattern bridged out (telemetry/{device_type}/{device_id})
+# remote_topic_prefix = ""                      # optional: remote-side topic prefix remap (PROVISIONAL)
+# qos = 1
+# component_name = ""                           # reserved for a future native awsiot.greengrasscoreipc route; unused today
+
+# --- Multi-tier location tagging ------------------------------------------------------------------
+# Tags outbound telemetry with a best-effort location fix, falling back through Manual > GpsNmea >
+# ModemManager > IpGeo. See docs/modules/lib-locate.md. PROVISIONAL TOML shape — no reference was
+# available to confirm the legacy pipeline's real config key names against; see that module doc's
+# caveat. `LocationConfig::to_chain` maps every field below into `lib_locate::LocationChain`
+# end-to-end (wired in the #237 integration pass); `run_refresher`'s fix feed reaches
+# `GreengrassTap`'s location tagging whenever `[greengrass]` is also configured. `MeshTap` does
+# NOT yet receive a location fix (its `offer` always calls `condense(reading, None, ..)` — see
+# `impl-app/src/host/impl_host_tap.rs` — since `MeshTap`'s frozen seam shape carries no location
+# receiver field); wiring that is a follow-up.
+# [location]
+# order = ["manual", "gps-nmea", "modem-manager", "ip-geo"]   # fallback priority, most preferred first
+# refresh_secs = 60
+# manual_lat = 37.774929        # manual-override fix; BOTH manual_lat and manual_lon must be set
+# manual_lon = -122.419416      # to activate the manual tier
+# gps_port = "/dev/ttyACM0"     # serial device path for the GPS-NMEA tier
+# ip_geo_url = "http://ip-api.com/json"   # plain HTTP only — see lib-locate's no_std status note
+# gps_enabled = true            # per-tier administrative enable, independent of `order` membership
+# modem_enabled = true
+# ip_geo_enabled = false        # off by default: the only tier that reaches a third-party service
+
+# Top-level direction-selector (process-wide fallback): see the top of this file (right before
+# [device]) — it must live there, not here, since it's a bare key rather than a `[section]`.

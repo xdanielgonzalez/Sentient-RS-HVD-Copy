@@ -1,0 +1,74 @@
+{{- if .Values.networkPolicy.enabled }}
+# Mitigation for the plaintext/no-auth rumqttd broker on 0.0.0.0: only Telegraf and the
+# Green Grass Bridge may reach the app's MQTT port, only Telegraf may reach the bridge's
+# own listener, and only the app may reach the sim.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-app-mqtt
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "app") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "telegraf") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "greengrass-bridge") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.app.brokerPort }}
+---
+# The bridge's own demo listener is plaintext/no-auth too — same mitigation.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-greengrass-bridge-mqtt
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: greengrass-bridge
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "greengrass-bridge") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "telegraf") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 1883
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-sim-seplos
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sim
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "sim") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "app") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.sim.port }}
+{{- end }}

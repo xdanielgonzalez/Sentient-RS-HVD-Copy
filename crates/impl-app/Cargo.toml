@@ -1,0 +1,46 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "impl-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "The shared adapter application: one Seplos -> TMS -> MQTT poll loop over a Platform factory (transport + publisher + clock), plus the RS-232 Voltronic inverter -> TMS -> MQTT loop (feature `inverter`). Pure policy over the Platform seam — no platform concretion in-crate (ADR 0009): the RPi platform lives in bin-rpi-platform, the Zephyr platform in bin-zephyr-platform."
+
+[dependencies]
+# The app contract (ADR 0009): Platform/RunConfig/Health + preflight. impl-app is pure policy over
+# this seam — path-stability re-exports in src/lib.rs keep `impl_app::{Platform, RunConfig, ...}`
+# resolving unchanged for every existing consumer (bin-rpi, bin-zephyr-platform, tests, and the
+# west-built bin/zephyr app).
+spec-app = { workspace = true }
+lib-parse = { workspace = true, default-features = false, features = ["seplos"] }
+lib-mapping = { workspace = true, default-features = false }
+lib-io = { workspace = true, default-features = false }
+log = { workspace = true }
+heapless = { workspace = true }
+
+[features]
+default = []
+# The RS-232 Voltronic inverter leg (decision 0001) is a Pi-only concern: its poll loop
+# (`run_inverter`/`run_cycle_inverter`) and the `Voltronic` parser it drives are compiled only under
+# this feature, so the MCU no_std build never needs `lib-parse/voltronic` and stays unchanged (the
+# `Platform::emit_inverter_*` seam is a defaulted no-op there). See D9. `lib-parse/voltronic` is
+# std-independent (verified) — this gate is purely about not linking the Voltronic parser into the
+# MCU ROM, not about no_std-cleanliness (impl-app is unconditionally no_std under every feature
+# combo now — ADR 0009).
+inverter = ["lib-parse/voltronic"]
+
+[dev-dependencies]
+# The scripted transport + a small executor to drive run_cycle in isolation.
+lib-io = { workspace = true, default-features = true, features = ["mock"] }
+tokio = { workspace = true }
+# `tests/run_cycle.rs`'s `TestPlatform::emit_reading`/`emit_fault` test double serializes via
+# `serde::Serialize` directly (dev-only — no `src/` code names `serde` anymore post-purification).
+serde = { workspace = true }
+# `tests/arena_emit.rs` + `tests/monitor_queue_repro.rs` drive the canonical telemetry store
+# (CanonicalStore/PendingTopic) directly — it lives in lib-store now (ADR 0009), not this crate.
+lib-store = { workspace = true }
+
+[lints]
+workspace = true

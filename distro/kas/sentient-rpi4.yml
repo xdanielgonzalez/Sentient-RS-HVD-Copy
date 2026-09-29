@@ -1,0 +1,19 @@
+# kas config LAYER (not a standalone manifest) — overrides MACHINE for the Pi 4 (64-bit) target.
+#
+# kas merges multiple config files in sequence (colon-separated on the CLI), later files
+# overriding earlier ones. This file supplies ONLY the delta from sentient.yml's default machine
+# (raspberrypi5) — everything else (repos/layers/local_conf_header) is inherited unchanged.
+#
+# Usage:
+#   kas build distro/kas/sentient.yml:distro/kas/sentient-rpi4.yml
+#
+# See justfile's `yocto-build`/`yocto-image` recipes for how this is wired per-target, and
+# release.yml's Yocto job matrix (raspberrypi4-64, raspberrypi5) for the release-build loop.
+
+header:
+  version: 17
+  # Keep in lockstep with sentient.yml's header.version (same kas schema). kas 4.4 (pinned in
+  # .ci/yocto.Dockerfile) supports config schema versions 1–17 — version 18 is hard-rejected
+  # ("compatible with version 1 to 17"), which aborted the raspberrypi4-64 build at parse time.
+
+machine: raspberrypi4-64

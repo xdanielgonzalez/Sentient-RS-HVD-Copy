@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-greengrass-bridge
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: greengrass-bridge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "greengrass-bridge") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "greengrass-bridge") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/greengrass-bridge-configmap.yaml") . | sha256sum }}
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: mosquitto
+          image: "{{ .Values.images.mosquitto.repository }}:{{ .Values.images.mosquitto.tag }}"
+          imagePullPolicy: {{ .Values.images.mosquitto.pullPolicy }}
+          # No probes: the bridge retries the device broker with backoff internally, and
+          # Telegraf retries this listener — same resilience posture as the rest of the
+          # stack.
+          ports:
+            - name: mqtt
+              containerPort: 1883
+          volumeMounts:
+            - name: config
+              mountPath: /mosquitto/config/mosquitto.conf
+              subPath: mosquitto.conf
+              readOnly: true
+          resources:
+            {{- toYaml .Values.greengrassBridge.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "sentient-viz.fullname" . }}-greengrass-bridge

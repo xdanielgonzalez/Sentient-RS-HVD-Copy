@@ -1,0 +1,101 @@
+name: _bench (reusable)
+
+# Reusable workflow: the pre-release stack-size + hotpath-bench gate (CI Slice D of the
+# bench-hotpath-stack-gate work). Called only via `workflow_call`, from uat.yml's post-merge
+# pipeline — a stack-size regression on the MCU/no_std hot path must not ride an auto-cut release.
+#
+# TWO tiers, deliberately split:
+#   - `just stack-sizes` is a HARD gate: it re-derives per-function stack-frame sizes for the
+#     no_std hot path (RUSTFLAGS=-Zemit-stack-sizes, nightly-only — see CLAUDE.md's Embedded /
+#     Firmware rules: "size stacks/buffers by MEASUREMENT, not guessing") and fails the job
+#     outright on a regression. A blown SRAM budget on the 64 KB MCU is ship-blocking, not an FYI.
+#   - `just bench-check` is ADVISORY (`continue-on-error: true`): it reports the hotpath
+#     performance trend without failing the job — drift gets visibility in $GITHUB_STEP_SUMMARY on
+#     every run, but only the stack-size gate blocks the release auto-cut (see uat.yml's `promote`
+#     job: `needs: [uat, bench]`).
+#
+# `-Zemit-stack-sizes` is a nightly flag, but stack_sizes_audit.py unlocks it on the image's PINNED
+# stable 1.91 toolchain via RUSTC_BOOTSTRAP=1 — so the frame numbers are REPRODUCIBLE and this
+# release-blocking gate never churns on a floating nightly (which CI would otherwise re-install
+# daily). The job only ensures the 1.91 toolchain (the same one _quality.yml's msrv job drives via
+# `cargo +1.91`) carries the llvm-tools component (llvm-readobj — the `.stack_sizes` reader) and the
+# thumbv7em-none-eabihf target. No nightly anywhere.
+
+on:
+  workflow_call:
+    secrets:
+      CACHE_AWS_KEY:
+        required: false
+      CACHE_AWS_SECRET:
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  bench:
+    name: bench (stack-size gate + hotpath trend)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+          # Read-only lane (no push, no private-submodule fetch beyond this checkout): don't
+          # persist the token past this step (zizmor artipacked).
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          minio-access-key: ${{ secrets.CACHE_AWS_KEY }}
+          minio-secret-key: ${{ secrets.CACHE_AWS_SECRET }}
+          cache-key: bench
+
+      # stack_sizes_audit.py drives `cargo +1.91` with RUSTC_BOOTSTRAP=1 to get `-Zemit-stack-sizes`
+      # on the pinned stable toolchain (reproducible frames — no floating nightly). Ensure that 1.91
+      # toolchain has the llvm-tools component (the `.stack_sizes` reader) and the MCU target; both
+      # are idempotent component/target adds (no toolchain download).
+      - name: Ensure 1.91 llvm-tools + thumbv7em-none-eabihf (for -Zemit-stack-sizes)
+        run: |
+          rustup component add llvm-tools --toolchain 1.91
+          rustup target add thumbv7em-none-eabihf --toolchain 1.91
+
+      # HARD gate — a stack-frame regression on the no_std hot path fails this job outright, which
+      # (via uat.yml's `promote: needs: [uat, bench]`) blocks the auto-cut release.
+      - name: just stack-sizes (HARD gate — MCU stack-frame regression)
+        run: just stack-sizes
+
+      # ADVISORY — hotpath perf trend, visible but non-blocking. `continue-on-error: true` keeps a
+      # perf dip from failing the job or blocking promote; the trend still lands in the step
+      # summary below so a regression doesn't go unnoticed.
+      - name: just bench-check (advisory — hotpath trend)
+        id: bench_check
+        continue-on-error: true
+        run: just bench-check | tee bench-check.log
+
+      # Native step summary (no extra perms). Always runs (even if bench-check failed, since that
+      # failure is advisory-only) so the trend is visible on every run, not just clean ones.
+      - name: Publish bench-check trend summary
+        if: always()
+        env:
+          BENCH_CHECK_OUTCOME: ${{ steps.bench_check.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## bench-check (advisory hotpath trend)"
+            echo
+            echo '```'
+            cat bench-check.log 2>/dev/null || echo "(no bench-check output captured)"
+            echo '```'
+            if [ "$BENCH_CHECK_OUTCOME" = "failure" ]; then
+              echo
+              echo "_bench-check reported a regression above its advisory threshold — advisory only, does not fail this job or block promote; see the log above._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

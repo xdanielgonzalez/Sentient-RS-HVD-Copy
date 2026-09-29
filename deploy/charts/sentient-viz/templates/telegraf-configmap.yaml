@@ -1,0 +1,339 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-telegraf
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: telegraf
+data:
+  # MQTT -> InfluxDB parsing contract. ONE mqtt_consumer (one broker connection)
+  # total — was 5 clients, each with its own client_id; consolidated after they
+  # were found hammering rumqttd with parallel connections. The single consumer
+  # captures every message verbatim as measurement mqtt_raw (data_format
+  # "value"); the processors.starlark block below re-derives the typed
+  # measurements (dc_measurement, battery_pack, battery_cell, diagnostic,
+  # heartbeat) from that SAME raw metric by switching on the topic tag and
+  # json-decoding the payload, so both the raw row and the typed row(s) reach
+  # InfluxDB from one broker round trip. Timestamps are message-arrival time:
+  # the TMS payloads carry {"seconds":...} objects, not RFC3339 —
+  # indistinguishable on a dashboard at a 2 s poll cadence.
+  telegraf.conf: |
+    [agent]
+      interval = "2s"
+      flush_interval = "{{ .Values.telegraf.flushIntervalSeconds }}s"
+      omit_hostname = true
+
+    [[outputs.influxdb_v2]]
+      urls = ["${INFLUX_URL}"]
+      token = "${INFLUX_TOKEN}"
+      organization = "${INFLUX_ORG}"
+      bucket = "${INFLUX_BUCKET}"
+
+    # ---- device broker connection(s): tms/#, legacy/#, status/# -> mqtt_raw ----
+    # Verbatim capture, no json_v2 parsing: data_format "value" + data_type "string" puts the whole
+    # payload string in field "value"; topic_tag left at default so the full topic arrives in tag
+    # "topic". The processors.starlark block below re-derives the typed measurements — keyed by
+    # device_id from tms/{device_id}/..., so MULTIPLE brokers can feed one mqtt_raw stream and land
+    # side by side. `telegraf.inClusterBroker` (default true) renders the in-cluster app+sim
+    # consumer; `telegraf.extraDeviceBrokers` adds one consumer per EXTERNAL broker (real hardware,
+    # e.g. a Pi Zero running bin-rpi), each with a distinct client_id so brokers don't kick each
+    # other. qos 1 + keepalive + persistent_session on every consumer (the stable-connection fix —
+    # rumqttd flapped a plain qos-0 client every ~60-75s, silently starving the pipeline).
+    #
+    # KEEPALIVE is broker-specific, NOT one value fits all — a too-short keepalive silently
+    # starves a consumer without ever erroring (it just reconnects every ~keepalive*1.5s, catching
+    # only retained msgs, missing the live stream). The in-cluster rumqttd (bin-rpi's embedded
+    # broker) answers PINGRESP but is slow under its own publish+logging firehose, so keepalive=30
+    # got its telegraf client kicked every ~40s and dropped nearly all live METEOR-001 topics
+    # (2026-07-29); 120 gives PINGRESP enough slack. External device brokers set their OWN keepalive
+    # per entry (`extraDeviceBrokers[].keepalive`) — the RP2350 Feather needs 0 (never ping): its
+    # device-hosted broker answers PINGREQ via a stage-OR-DROP control path, so while its slot is
+    # busy staging a QoS-0 PUBLISH — and it publishes constantly — the PINGRESP is dropped, and any
+    # keepalive>0 makes telegraf ping, lose the reply, time out, and reconnect. keepalive=0 = no
+    # ping; the broker's steady data + TCP ACKs hold the socket (its app-level idle enforcement is a
+    # documented no-op; only the 30s embassy-net TCP timeout applies, satisfied by constant data).
+    {{- if .Values.telegraf.inClusterBroker }}
+    [[inputs.mqtt_consumer]]
+      servers = ["${MQTT_URL}"]
+      topics = ["tms/#", "legacy/#", "status/#"]
+      client_id = "telegraf"
+      qos = 1
+      keepalive = 120
+      persistent_session = true
+      startup_error_behavior = "retry"
+      data_format = "value"
+      data_type = "string"
+      name_override = "mqtt_raw"
+    {{- end }}
+    {{- range $i, $b := .Values.telegraf.extraDeviceBrokers }}
+    [[inputs.mqtt_consumer]]
+      servers = ["{{ $b.url }}"]
+      # Real external devices: capture EVERY topic (verbatim mqtt_raw), not just the tms/legacy/status
+      # namespaces — so nothing the device publishes is dropped. ("#" excludes $SYS by MQTT rule.)
+      topics = ["#"]
+      client_id = "{{ $b.clientId | default (printf "telegraf-ext-%d" $i) }}"
+      qos = 1
+      # Per-device (see the keepalive discussion above): the Feather sets 0. Default 60 for a
+      # well-behaved external rumqttd (e.g. a Pi Zero) that answers PINGRESP promptly.
+      keepalive = {{ if hasKey $b "keepalive" }}{{ $b.keepalive }}{{ else }}60{{ end }}
+      persistent_session = true
+      startup_error_behavior = "retry"
+      data_format = "value"
+      data_type = "string"
+      name_override = "mqtt_raw"
+    {{- end }}
+
+    # ---- the Green Grass Bridge connection: telemetry/# + bridge state -> greengrass_raw ----
+    # A SECOND broker connection, but not a second rumqttd client: this one subscribes
+    # to the greengrass-bridge mosquitto (which itself holds the single bridge
+    # connection into rumqttd), so the "ONE connection to the device broker"
+    # consolidation above still holds. telemetry/# here is exactly what the on-Pi relay
+    # would push to an AWS IoT Greengrass core; the $SYS topic is the bridge's retained
+    # "1"/"0" connection-state notification (pinned in greengrass-bridge-configmap.yaml).
+    # Verbatim capture like mqtt_raw; the second processors.starlark block below derives
+    # the typed greengrass_telemetry / greengrass_bridge_state measurements.
+    [[inputs.mqtt_consumer]]
+      servers = ["${GREENGRASS_MQTT_URL}"]
+      topics = ["telemetry/#", "$$SYS/broker/connection/device-broker/state"]
+      client_id = "telegraf-greengrass"
+      qos = 1
+      startup_error_behavior = "retry"
+      data_format = "value"
+      data_type = "string"
+      name_override = "greengrass_raw"
+
+    # ---- typed measurements, re-derived from mqtt_raw (needs telegraf >= 1.35 for
+    # processors.starlark) ----
+    # Reproduces the retired per-topic json_v2 contract field-for-field from the
+    # single raw stream above: switch on the "topic" tag, json.decode() the
+    # "value" field, and emit the SAME measurement/tag/field names the five
+    # retired mqtt_consumer blocks used to produce (dc_measurement, battery_pack,
+    # battery_cell, diagnostic, heartbeat) — see wire_value_correctness.rs /
+    # generated_encoders.rs for the JSON shape this mirrors. apply() always
+    # returns the original mqtt_raw metric too, so raw + typed both land in
+    # InfluxDB from the one MQTT round trip. catch() guards the decode/emit path
+    # so a malformed payload only skips the typed derivation — the raw row (the
+    # whole point of the MQTT Stream dashboard) still gets through. Syntax +
+    # runtime behavior verified against go.starlark.net (the library telegraf
+    # embeds) with synthetic TMS payloads before landing this — no telegraf
+    # binary available locally to run `telegraf --test`.
+    [[processors.starlark]]
+      namepass = ["mqtt_raw"]
+      source = '''
+    load("json.star", "json")
+
+    def set_field(m, name, value):
+        if value != None:
+            m.fields[name] = value
+
+    def emit_dc_measurement(out, metric, device_id, data):
+        # tms/+/dc_measurement_update -> dc_measurement. `line` nests inside each
+        # external_measurement[] port entry; one output row per line entry, tagged
+        # with that port's port_number (mirrors the retired json_v2 object's
+        # "nested line array flattens to line_* keys, one row per element").
+        for port in data.get("external_measurement", []):
+            port_number = port.get("port_number")
+            for line in port.get("line", []):
+                m = Metric("dc_measurement")
+                m.time = metric.time
+                m.tags["device_id"] = device_id
+                if port_number != None:
+                    m.tags["port_number"] = str(port_number)
+                set_field(m, "line_amperage", line.get("amperage"))
+                set_field(m, "line_power", line.get("power"))
+                set_field(m, "line_voltage", line.get("voltage"))
+                if len(m.fields.items()) > 0:
+                    out.append(m)
+
+    def emit_power_hardware(out, metric, device_id, data):
+        # tms/+/power_hardware_update -> battery_pack (pack-level temps) +
+        # battery_cell (one row per storage cell). energy_storage and its
+        # temperature triple can be null (no sensors) -- skip nulls exactly like
+        # json_v2 silently dropped them, and skip a metric left with zero fields
+        # (telegraf needs at least one field to write a metric).
+        es = data.get("energy_storage")
+        if es == None:
+            return
+        pack = Metric("battery_pack")
+        pack.time = metric.time
+        pack.tags["device_id"] = device_id
+        set_field(pack, "average_temperature", es.get("average_temperature"))
+        set_field(pack, "max_temperature", es.get("max_temperature"))
+        set_field(pack, "min_temperature", es.get("min_temperature"))
+        if len(pack.fields.items()) > 0:
+            out.append(pack)
+        for cell in es.get("storage_cells", []):
+            c = Metric("battery_cell")
+            c.time = metric.time
+            c.tags["device_id"] = device_id
+            cell_number = cell.get("cell_number")
+            if cell_number != None:
+                c.tags["cell_number"] = str(cell_number)
+            # state_of_charge here is a 0-1 fraction (TMS), not a percentage.
+            set_field(c, "cycle_counter", cell.get("cycle_counter"))
+            set_field(c, "state_of_charge", cell.get("state_of_charge"))
+            set_field(c, "temperature", cell.get("temperature"))
+            set_field(c, "voltage", cell.get("voltage"))
+            if len(c.fields.items()) > 0:
+                out.append(c)
+
+    def emit_diagnostic(out, metric, device_id, data):
+        # tms/+/active_diagnostic_state -> diagnostic, one row per fault code.
+        # failure_mode/severity are the FMI_.../SEV_... strings the UAT freshness
+        # gate greps for.
+        for code in data.get("codes", []):
+            d = Metric("diagnostic")
+            d.time = metric.time
+            d.tags["device_id"] = device_id
+            failure_mode = code.get("failure_mode")
+            if failure_mode != None:
+                d.tags["failure_mode"] = failure_mode
+            severity = code.get("severity")
+            if severity != None:
+                d.tags["severity"] = severity
+            set_field(d, "hint", code.get("hint"))
+            # BOTH numeric diagnostic fields are written as FLOAT deliberately: the standing
+            # viz-uat bucket's `diagnostic` schema was established by the retired json_v2 parser
+            # (ALL numbers -> float), and InfluxDB rejects int writes against a float field
+            # forever after ("field type conflict ... is type integer, already exists as type
+            # float"). starlark json.decode yields int for JSON integers, so cast. Influx names
+            # conflicts ONE field per write: occurrence_count surfaced first (2026-07-19 viz-UAT
+            # failure), suspect_parameter immediately after that fix deployed — these two are the
+            # only numeric fields on `diagnostic` (hint is a string; failure_mode/severity are
+            # tags). Fields on OTHER measurements stay untouched: casting a field whose schema is
+            # int (e.g. heartbeat.sequence_number, json_v2-typed int) would create the inverse
+            # conflict.
+            oc = code.get("occurrence_count")
+            if oc != None:
+                d.fields["occurrence_count"] = float(oc)
+            sp = code.get("suspect_parameter")
+            if sp != None:
+                d.fields["suspect_parameter"] = float(sp)
+            if len(d.fields.items()) > 0:
+                out.append(d)
+
+    def emit_heartbeat(out, metric, device_id, data):
+        # tms/+/heartbeat -> heartbeat. sequence_number forced to int (mirrors the
+        # retired json_v2 field's explicit type = "int").
+        h = Metric("heartbeat")
+        h.time = metric.time
+        h.tags["device_id"] = device_id
+        seq = data.get("sequence_number")
+        if seq != None:
+            h.fields["sequence_number"] = int(seq)
+        if len(h.fields.items()) > 0:
+            out.append(h)
+
+    def route(out, metric, device_id, leaf, raw):
+        data = json.decode(raw)
+        if leaf == "dc_measurement_update":
+            emit_dc_measurement(out, metric, device_id, data)
+        elif leaf == "power_hardware_update":
+            emit_power_hardware(out, metric, device_id, data)
+        elif leaf == "active_diagnostic_state":
+            emit_diagnostic(out, metric, device_id, data)
+        elif leaf == "heartbeat":
+            emit_heartbeat(out, metric, device_id, data)
+
+    def emit_rails(out, metric, raw):
+        # diag/rails (a FLAT topic, NOT under tms/) -> rails, one row per INA3221
+        # power-monitor channel on the METEOR-002 bench board: eth = W5500 Ethernet
+        # PHY, radio = Heltec LoRa, mcu = the RP2350's own supply. mw is computed
+        # here (mv * ma / 1000) rather than stored raw -- canonical data in, derived
+        # value on output, same doctrine as the TMS emitters above -- so Grafana never
+        # computes power itself (the Rail Power & Efficiency dashboard reads mw). The
+        # topic carries no device_id, so it's fixed to METEOR-002 (the only board that
+        # publishes diag/rails).
+        data = json.decode(raw)
+        for rail in ["eth", "radio", "mcu"]:
+            ma = data.get(rail + "_ma")
+            mv = data.get(rail + "_mv")
+            if ma == None or mv == None:
+                continue
+            m = Metric("rails")
+            m.time = metric.time
+            m.tags["device_id"] = "METEOR-002"
+            m.tags["rail"] = rail
+            m.fields["ma"] = ma
+            m.fields["mv"] = mv
+            m.fields["mw"] = float(mv) * float(ma) / 1000.0
+            out.append(m)
+
+    # Not re-derived (deliberately, same as the retired json_v2 blocks): retained
+    # state topics (device_info, power_port_state, energy_start_stop_state, ...)
+    # and storage_update -- dashboard-irrelevant for the typed views, still
+    # captured verbatim in mqtt_raw. legacy/# and status/# are raw-only too.
+    KNOWN_LEAVES = ("dc_measurement_update", "power_hardware_update", "active_diagnostic_state", "heartbeat")
+
+    def apply(metric):
+        out = [metric]
+        topic = metric.tags.get("topic")
+        if topic == None:
+            return out
+        if topic == "diag/rails":
+            raw = metric.fields.get("value")
+            if raw != None:
+                catch(lambda: emit_rails(out, metric, raw))
+            return out
+        parts = topic.split("/")
+        if len(parts) != 3 or parts[0] != "tms":
+            return out
+        leaf = parts[2]
+        if leaf not in KNOWN_LEAVES:
+            return out
+        raw = metric.fields.get("value")
+        if raw == None:
+            return out
+        device_id = parts[1]
+        catch(lambda: route(out, metric, device_id, leaf, raw))
+        return out
+      '''
+
+    # ---- typed Greengrass-bound measurements, re-derived from greengrass_raw ----
+    # The telemetry/{device_type}/{device_id} payload is the merged FLAT legacy JSON
+    # (lib-mapping's battery_payload — cell_{i}_voltage mV ints, temperature_{j},
+    # current, state_of_charge %, the 0/1 fault flags, ...), so no per-key contract is
+    # needed: every numeric value becomes a field of greengrass_telemetry as-is, strings
+    # (timestamp, location_source, ...) are skipped — device_type/device_id already
+    # arrive as tags from the topic. The $SYS state payload ("1"/"0") becomes
+    # greengrass_bridge_state.connected. Same guard rails as the block above: catch()
+    # so a malformed payload only skips the typed derivation, and the raw parity row
+    # always gets through.
+    [[processors.starlark]]
+      namepass = ["greengrass_raw"]
+      source = '''
+    load("json.star", "json")
+
+    def emit_telemetry(out, metric, device_type, device_id, raw):
+        data = json.decode(raw)
+        m = Metric("greengrass_telemetry")
+        m.time = metric.time
+        m.tags["device_type"] = device_type
+        m.tags["device_id"] = device_id
+        for k, v in data.items():
+            t = type(v)
+            if t == "int" or t == "float":
+                m.fields[k] = v
+        if len(m.fields.items()) > 0:
+            out.append(m)
+
+    def emit_state(out, metric, raw):
+        s = Metric("greengrass_bridge_state")
+        s.time = metric.time
+        s.tags["connection"] = "device-broker"
+        s.fields["connected"] = int(raw.strip())
+        out.append(s)
+
+    def apply(metric):
+        out = [metric]
+        topic = metric.tags.get("topic")
+        raw = metric.fields.get("value")
+        if topic == None or raw == None:
+            return out
+        parts = topic.split("/")
+        if parts[0] == "telemetry" and len(parts) == 3:
+            catch(lambda: emit_telemetry(out, metric, parts[1], parts[2], raw))
+        elif topic == "$$SYS/broker/connection/device-broker/state":
+            catch(lambda: emit_state(out, metric, raw))
+        return out
+      '''

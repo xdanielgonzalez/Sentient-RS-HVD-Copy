@@ -1,0 +1,136 @@
+name: _viz-uat (reusable)
+
+# Reusable workflow — VIZ-STACK CONTINUOUS DEPLOY + UAT. Called by viz-deploy.yml, which owns the
+# push-to-main trigger + path filter (split out of uat.yml — delivery vs deployment, #377).
+#
+# docs.yml-style standing environment: every qualifying merge `helm upgrade --install`s
+# deploy/charts/sentient-viz into the fixed `viz-uat` namespace on the build-github k3s cluster,
+# asserts real telemetry end-to-end (sim -> bin-rpi -> rumqttd -> telegraf -> influx, plus fault
+# injection), and LEAVES IT RUNNING — a live Grafana demo with full history on its PVC (access:
+# kubectl -n viz-uat port-forward svc/sentient-viz-grafana 3000).
+#
+# ADVISORY lane: nothing gates a release on it — the viz stack is an ops/demo tool, not shipped
+# product; a red here flags a regression without blocking uat.yml's release auto-cut (which now
+# cannot even see it: separate workflow, separate red/green). Fixed namespace + fixed release name
+# keep upgrades idempotent (concurrency is already serialized workflow-wide in the caller). Skips
+# gracefully until the one-time bring-up mints VIZ_UAT_KUBECONFIG (.ci/k8s/viz-uat/README.md),
+# mirroring the DOCS_KUBECONFIG pattern (#294).
+#
+# The deploy/assert + diagnostics step bodies live in .ci/scripts/viz-uat/*.sh.
+
+on:
+  workflow_call:
+    secrets:
+      HARBOR_ROBOT_USER:
+        required: false
+      HARBOR_ROBOT_TOKEN:
+        required: false
+      VIZ_UAT_KUBECONFIG:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  viz-uat:
+    name: viz stack deploy + UAT (helm on k3s)
+    # arc-dind, NOT arc-runner-set: needs the dind daemon for the image builds (bare job).
+    runs-on: arc-dind
+    timeout-minutes: 45
+    env:
+      REGISTRY: rust-mirror:443
+      HARBOR_NS: sentient
+      KUBECTL_VERSION: v1.33.0
+      HELM_VERSION: v3.17.0
+      NS: viz-uat
+      RELEASE: sentient-viz
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      # Only merges that can change the stack: deploy/**, crates/**, the workspace manifests, this
+      # workflow, or its scripts. HEAD^ is the first parent — correct for squash and merge commits
+      # alike. Manual dispatches always run.
+      - name: Decide whether this merge touches the viz stack
+        id: guard
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git diff --name-only HEAD^ HEAD | grep -qE '^(deploy/|crates/|Cargo\.(toml|lock)$|\.github/workflows/(viz-deploy|_viz-uat)\.yml$|\.ci/scripts/viz-uat/)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::viz-uat skipped — merge touches neither deploy/ nor crates/"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        if: steps.guard.outputs.run == 'true'
+        with:
+          # Same Harbor-CA + MTU story as docs.yml / builder-image.yml.
+          buildkitd-flags: --allow-insecure-entitlement network.host
+          driver-opts: |
+            env.SSL_CERT_DIR=/etc/ssl/certs:/etc/buildkit/certs/rust-mirror:443
+          buildkitd-config-inline: |
+            [registry."rust-mirror:443"]
+              ca = ["${{ github.workspace }}/.ci/harbor-ca.crt"]
+
+      - name: Write Harbor robot creds to docker config
+        if: steps.guard.outputs.run == 'true'
+        env:
+          HARBOR_ROBOT_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_ROBOT_TOKEN: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+        run: |
+          # No `docker login` — see docs.yml (dind daemon doesn't trust the Harbor CA; buildkit does).
+          mkdir -p "$HOME/.docker"
+          auth=$(printf '%s:%s' "$HARBOR_ROBOT_USER" "$HARBOR_ROBOT_TOKEN" | base64 -w0)
+          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "${{ env.REGISTRY }}" "$auth" > "$HOME/.docker/config.json"
+
+      - name: Build + push app image
+        if: steps.guard.outputs.run == 'true'
+        env:
+          SSL_CERT_DIR: /etc/ssl/certs:${{ github.workspace }}/.ci
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: app
+          push: true
+          network: host
+          tags: ${{ env.REGISTRY }}/${{ env.HARBOR_NS }}/sentient-viz-app:uat-${{ github.run_id }}
+
+      - name: Build + push sim image
+        if: steps.guard.outputs.run == 'true'
+        env:
+          SSL_CERT_DIR: /etc/ssl/certs:${{ github.workspace }}/.ci
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: sim
+          push: true
+          network: host
+          tags: ${{ env.REGISTRY }}/${{ env.HARBOR_NS }}/sentient-viz-sim:uat-${{ github.run_id }}
+
+      - name: Install pinned kubectl + helm
+        if: steps.guard.outputs.run == 'true'
+        uses: ./.github/actions/setup-k8s-tools
+        with:
+          kubectl-version: ${{ env.KUBECTL_VERSION }}
+          helm-version: ${{ env.HELM_VERSION }}
+
+      - name: Install chart + assert telemetry
+        id: install
+        if: steps.guard.outputs.run == 'true'
+        env:
+          VIZ_UAT_KUBECONFIG: ${{ secrets.VIZ_UAT_KUBECONFIG }}
+          IMAGE_TAG: uat-${{ github.run_id }}
+        run: .ci/scripts/viz-uat/deploy-and-assert.sh
+
+      # On any assert failure above, capture the cluster-side ground truth CI otherwise discards.
+      - name: Dump cluster diagnostics on failure
+        if: failure() && steps.install.conclusion == 'failure'
+        run: .ci/scripts/viz-uat/dump-diagnostics.sh

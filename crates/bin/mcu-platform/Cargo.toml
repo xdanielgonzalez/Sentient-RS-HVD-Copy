@@ -1,0 +1,86 @@
+# bin-mcu-platform — the Embassy MCU platform impl (EPIC #350, story #352: MCU runtime pivot
+# Zephyr -> Embassy). Host-clippy-able peer of bin-zephyr-platform/bin-rpi-platform, but no_std:
+# depends on spec-app (the contract) + lib-io/lib-mapping/lib-parse/lib-net, NEVER on impl-app (the
+# policy) — the same ADR 0009 dependency inversion the other two platform crates follow.
+#
+# DELIBERATELY EMBASSY-VERSION-FREE. `bin/mcu-rp2350` (the real Embassy MCU binary, Agent B/EPIC #350)
+# lives in an EXCLUDED workspace pinning `embassy-rp` 0.10 + `embassy-time` 0.5; THIS crate is a
+# workspace member (so host clippy/test/build cover it) and must never pull any `embassy-*` crate
+# itself — the main workspace already pins `embassy-time = "0.4"` for `lib-net`'s embassy-net spike,
+# and `embassy-time-driver`'s `links = "embassy-time"` key allows only ONE version per graph. Every
+# embassy-shaped type here is a generic (`U`/`D`/`T` on `lib_io::EmbassyUart`, `C: McuClock`) that
+# `bin/mcu-rp2350` instantiates with its own concrete embassy types at the call site.
+
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "bin-mcu-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "The Embassy MCU platform impl of the app's seams (EPIC #350): a channel-backed Publisher + an EmbassyUart transport + an injected McuClock — embassy-version-free by construction (bin/mcu-rp2350 supplies concrete embassy types). Depends on spec-app (the contract), never on impl-app (the policy)."
+
+# No `[lib] test = false` needed (unlike bin-zephyr-platform, which guards against unresolvable
+# extern "C" sz_* symbols): this crate pulls in no embassy-* crate and no FFI, so its host test
+# harness links and runs normally — it is pure generic Rust over trait seams.
+
+[dependencies]
+# The app contract (ADR 0009): the Platform port + RunConfig/Health + preflight. spec-app declares
+# no [features], so the default-features-inheritance trap the direct-path deps below avoid does not
+# apply here — `workspace = true` is safe.
+spec-app = { workspace = true }
+# The chip-agnostic embassy UART transport (`EmbassyUart<U, D, T>`, feature `embassy`) — itself
+# embassy-version-free (an injected `T: embedded_hal_async::delay::DelayNs` stands in for
+# `embassy_time::Timer`; see that crate's `embassy_uart` module doc comment).
+lib-io = { workspace = true, default-features = false, features = ["embassy"] }
+# The canonical<->TMS mapping bridge: `render`/`sink` (the flat wire serializer + the no_std
+# Publisher contract) are unconditional (not gated by `std`/`legacy`), so `default-features = false`
+# is enough — no `std`/`legacy` (alloc-based JSON) needed on this no_std MCU path.
+lib-mapping = { workspace = true, default-features = false }
+# `lib_parse::canonical` (the vendor-neutral model `Platform`'s emit_* signatures carry) is
+# unconditional too (not gated by `seplos`/`voltronic`); default-features = false skips std and
+# every per-vendor parser this crate never touches directly.
+lib-parse = { workspace = true, default-features = false }
+# ONLY for the always-on `channel` module (`Sender`/`Receiver`/`MqttUnit` — see that module's own
+# Cargo.toml comment: "non-optional... every other module builds on this"). NOT `path = ...`
+# because the lib-net workspace.dependencies entry already states `default-features = false`
+# explicitly (unlike bin-zephyr-platform's `link` feature, this crate enables no lib-net feature at
+# all — `channel-embassy` is consumed by `bin/mcu-rp2350` itself, not this host-checkable peer).
+lib-net = { workspace = true }
+heapless = { workspace = true }
+# `McuPlatform`'s `impl spec_app::Platform` header must restate the SAME `U`/`D`/`T` trait bounds
+# lib-io's own (conditional) `EmbassyUart<U, D, T>: SerialTransport` impl uses, so the compiler can
+# verify `Self::Transport: SerialTransport` holds — hence these three trait-only crates as DIRECT
+# deps here too (Rust requires a direct dependency to name a trait, even one only ever used to
+# restate a bound another crate already proved). All three are pure `embedded-hal`-family trait
+# crates with no embassy runtime/version pin, so they don't reintroduce the embassy-version
+# conflict this crate exists to avoid.
+embedded-hal = { workspace = true }
+embedded-io-async = { workspace = true }
+embedded-hal-async = { version = "1", default-features = false }
+
+[features]
+default = []
+# WP3 (delight-features): the Meshtastic mesh-radio forwarding decorator (`MeshPlatform`) + its
+# channel-message type (`MeshUnit`). Enables `lib-net`'s own `mesh` feature (the no_std/no-alloc
+# codec — condense + on-air framing types; NOT `mesh-tokio`, which is std/tokio-only and pulls in
+# `locate` too — the MCU has no location service, see `CondenseInput::loc`'s doc comment). Default
+# OFF so a plain `cargo build`/`cargo test` of this crate (and every consumer that doesn't opt in,
+# e.g. the default `ns` image) is unchanged. NOT in this work package's originally-listed file set
+# (only `crates/bin-mcu-platform/src/*` was named) — added here because enabling `lib-net/mesh`
+# from this crate is impossible without it; flagged in WP3's final report.
+mesh = ["lib-net/mesh"]
+
+# Overrides `Platform::emit_rail_draw` (INA3221 multi-rail DEVICE-DRAW diagnostics — the adapter's
+# own W5500/Heltec rails, NOT TMS mission telemetry; that stays the Seplos BMS leg, unaffected) on
+# `McuPlatform`, and provides `impl spec_app::RailMonitor for Ina3221RailMonitor<..>` (the newtype
+# wrapper `types::ina3221_rail_monitor` needs to satisfy the orphan rule). Enables `lib-io`'s own
+# `ina3221` feature (the owned async driver) — `lib_mapping::schema::DeviceRailReading` needs no
+# feature of its own (unconditional in its crate), and this leg calls NOTHING in `lib_mapping`
+# beyond that one plain data type (no TMS render/transform path — see `impl_mcu_platform.rs`'s
+# `publish_rail_draw` doc comment for the correction this records). Default OFF, same as `mesh`.
+power = ["lib-io/ina3221"]
+
+[lints]
+workspace = true

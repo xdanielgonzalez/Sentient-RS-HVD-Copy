@@ -1,0 +1,11 @@
+# Compose twin of the chart's dashboard provider (grafana-provisioning-configmap.yaml).
+# Keep in sync with deploy/charts/sentient-viz.
+apiVersion: 1
+providers:
+  - name: sentient-viz
+    folder: Sentient
+    type: file
+    allowUiUpdates: true
+    disableDeletion: false
+    options:
+      path: /var/lib/grafana/dashboards

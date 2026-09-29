@@ -1,0 +1,38 @@
+# Own workspace root: this crate is EXCLUDED from the repo workspace (root Cargo.toml `exclude`), so
+# it must declare itself a standalone workspace or cargo errors ("believes it's in a workspace").
+# This is what keeps nom/quote out of the firmware lock/graph.
+[workspace]
+
+[package]
+name = "tms-idl-codegen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "LicenseRef-Proprietary"
+description = "Host-only code generator: parses the MIL-STD-3071 TMS IDL (nom) and emits ONE @generated concrete type catalogue (structs + enums with serde derives, TmsTopic/WireFlat impls, the TmsTopicId topic index, the TmsMessage factory, and the TopicRings store) via quote/prettyplease. OUT of the root workspace so nom/quote never touch the firmware graph."
+
+# This crate is intentionally EXCLUDED from the root workspace (see root Cargo.toml `exclude`), so
+# nom/quote/proc-macro2/syn never enter the firmware dependency graph or the cargo-vet surface.
+
+[[bin]]
+name = "tms-idl-codegen"
+path = "src/main.rs"
+
+[dependencies]
+nom = "7.1"
+nom_locate = "4.2"
+quote = "1.0"
+proc-macro2 = "1.0"
+syn = { version = "2.0", features = ["full", "parsing"] }
+prettyplease = "0.2"
+toml = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+
+# NOTE: the generated catalogue's byte-identity proofs live IN-workspace
+# (`crates/lib-tms/tests/`), where they can depend on the generated crate + the golden hand-written
+# schema/lib-mapping — so this out-of-workspace tool needs NO golden-crate dev-deps (its own
+# tests are parser/resolver unit tests only). That keeps nom/quote strictly on the tool side.
+
+[lints.clippy]
+unwrap_used = "allow"
+expect_used = "allow"

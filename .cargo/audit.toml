@@ -1,0 +1,31 @@
+# cargo-audit config. `just audit` (cargo audit) gates on vulnerabilities.
+#
+# Accepted, tracked vulnerabilities: the rustls-webpki CVEs below were originally reachable ONLY
+# through the rumqttc/rumqttd MQTT-TLS path. The fix requires rustls-webpki >=0.103, but rustls 0.22
+# pins webpki 0.102.x, so there is no in-range upgrade (`cargo update` locks 0 packages). The owned
+# TLS stage (`lib-link::tls::TlsStage`) has now landed and deliberately pins the SAME rustls
+# 0.22 (to avoid adding a third rustls major to the tree), so these are ALSO reachable via the owned
+# stack's default-on `tls` feature, not just rumqtt's. All four are CRL/name-constraint verification
+# edge cases the bring-up `TlsStage` doesn't exercise (no CRL checking, no name-constraints/wildcard
+# certs in its one embedded identity) — tracked, not currently a practical exposure. Removed when
+# webpki >=0.103 becomes reachable (rumqtt replaced, or rustls bumped past 0.22 workspace-wide).
+#   RUSTSEC-2026-0049  webpki: CRLs not authoritative by Distribution Point (faulty matching)
+#   RUSTSEC-2026-0098  webpki: name constraints for URI names incorrectly accepted
+#   RUSTSEC-2026-0099  webpki: name constraints accepted for wildcard-name certs
+#   RUSTSEC-2026-0104  webpki: reachable panic in CRL parsing
+#
+# Unmaintained (informational — NOT vulnerabilities), pulled in transitively (cargo-deny is scoped
+# to `unmaintained = "workspace"` and does not flag these; cargo-audit flags all, so they are listed
+# here). Neither is a security defect; both are "no longer actively maintained" notices on deep
+# transitive deps we do not directly depend on:
+#   RUSTSEC-2025-0134  rustls-pemfile is unmaintained (transitive via the rustls/MQTT-TLS chain)
+#   RUSTSEC-2024-0320  yaml-rust is unmaintained (transitive, dev/config tooling)
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2025-0134",
+    "RUSTSEC-2024-0320",
+]

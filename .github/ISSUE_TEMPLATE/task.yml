@@ -1,0 +1,98 @@
+name: "Task"
+description: "A concrete, single-PR-sized unit of work under a Story (e.g. TASK #154 under STORY #159)."
+title: "TASK: "
+labels: ["task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A Task should be small enough to land in one PR. If it's growing bigger than that, split it
+        into multiple Tasks under the same Story instead.
+
+  - type: input
+    id: parent_story
+    attributes:
+      label: Parent story
+      description: Issue number of the parent Story (or Epic, if this task is filed directly under an epic).
+      placeholder: "#159"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What needs to change, and why. Reference the specific file(s)/module(s) if known.
+      placeholder: |
+        e.g. crates/impl-app/src/host/impl_host_platform.rs `build()` currently propagates a
+        serial-open failure fatally via `?`. Make it non-fatal; start degraded with a
+        HostSerial::Disconnected state and retry via the existing reconnect() backoff.
+    validations:
+      required: true
+
+  - type: textarea
+    id: definition_of_done
+    attributes:
+      label: Definition of done
+      description: The specific, checkable conditions that close this out.
+      placeholder: |
+        - Behavior implemented + unit/host tests added
+        - `rtk cargo test` and `rtk cargo clippy` green
+        - No new typeimpl_audit.py violations (or baseline updated via `just smell-baseline`)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: target
+    attributes:
+      label: "Target(s) affected"
+      description: Which shipping/runtime target(s) does this touch? See CLAUDE.md "Platform & Deployment".
+      multiple: true
+      options:
+        - "Raspberry Pi (Yocto Linux / std+tokio, bin-rpi)"
+        - "MCU (Zephyr / no_std, bin-zephyr + bin-zephyr-platform)"
+        - "Host only (cargo test / tooling, no target-specific behavior)"
+        - "Cross-cutting (shared lib-* crate used by both)"
+        - "CI / build pipeline / distro (Yocto BitBake)"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: affected_crates
+    attributes:
+      label: Affected crate(s)
+      description: Check all that apply.
+      options:
+        - label: lib-parse (Seplos protocol -> CanonicalReading/CanonicalFault)
+        - label: lib-schema
+        - label: lib-mapping (Canonical -> TMS + Publisher contract)
+        - label: lib-io (SerialTransport, host tokio-serial, embassy UART)
+        - label: lib-mqtt (embedded rumqttd + Publisher)
+        - label: lib-security (auth/certs/crypto, wolfCrypt backend)
+        - label: lib-channel (typed bounded channels, packed codec)
+        - label: lib-link (NetLink L2 driver abstraction)
+        - label: lib-net-embassy (owned embassy-net/smoltcp stack, MCU-only)
+        - label: lib-preflight
+        - label: impl-app (shared run loop / Platform factory)
+        - label: bin-rpi (Pi Linux binary)
+        - label: bin-zephyr-platform (Zephyr FFI adapters, ZephyrPlatform)
+        - label: bin-zephyr (west app / C shim)
+        - label: test-kit / test-acceptance / test-e2e
+        - label: distro/ (Yocto meta-layer, BitBake)
+        - label: CI / workflows / tooling (not a crate)
+    validations:
+      required: false
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Testing / verification notes
+      description: How was/will this be verified? Reference the actual gates, not "tested locally".
+      placeholder: |
+        - `rtk cargo build`, `rtk cargo test`, `rtk cargo clippy` green
+        - Host-first repro (Miri/Loom) before any emulator run, per CLAUDE.md "Bounded Debugging"
+        - For no_std crates: `cargo build --target thumbv7em-none-eabihf` still links
+        - `just smell` (type/impl file-split gate) clean, or baseline updated
+      render: markdown
+    validations:
+      required: true

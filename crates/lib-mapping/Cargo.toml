@@ -1,0 +1,64 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "lib-mapping"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "TMS (MIL-STD-3071) payload mapping: Seplos telemetry <-> TMS schema, as typed structs with a serde JSON codec. Pure, TMS-facing."
+
+[dependencies]
+lib-parse = { workspace = true, default-features = false }
+# The bridge depends on BOTH model crates directly: lib-canonical (the device model the encoders
+# read) + lib-tms (the generated TMS types + Identity/ClockMonotonic). The generated wire encoders
+# are emitted into this crate (src/wire/generated_encoders.rs).
+lib-tms = { workspace = true }
+lib-canonical = { workspace = true }
+heapless = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+serde-json-core = { workspace = true }
+# `CountingSink`/`WriteSink`'s `JsonSink::f32`/`f64` impls (`src/wire/float_digits.rs`) —  ryu's
+# shortest-round-trip formatting, matching the `lib_tms::fields::JsonSink::f32`/`f64` contract.
+ryu = { workspace = true }
+# `legacy`-only (see [features] below): the flat-JSON codec. Optional so a no_std/TMS-only build
+# never pulls in an alloc-heavy JSON codec. Deliberately NOT `lib-locate` — this crate must never
+# depend on it (see `src/legacy/types/legacy_location_fix.rs`'s doc comment); the caller maps its
+# own `lib_locate::LocationFix` into this module's own `LegacyLocationFix` instead.
+serde_json = { workspace = true, optional = true }
+
+[features]
+default = ["std"]
+std = ["lib-parse/std", "serde/std"]
+# AWS-Greengrass backwards-compat merged flat legacy schema (Scope D, gap-closure #237, #269) — see
+# `src/legacy/mod.rs`'s doc comment. Requires `std`; not part of `default`. Quarantined: pulls in
+# `serde_json` (alloc-based JSON, distinct from the no_std `sink`/`codec`/`wire` TMS path) — which
+# may never enter a no_std dependency line (CLAUDE.md "Lints"), exactly why it's gated behind this
+# non-default feature.
+legacy = ["std", "dep:serde_json"]
+
+[dev-dependencies]
+# `preserve_order`: another agent's cross-oracle test (this phase) needs field-order-preserving
+# `serde_json::Value` maps; added here even though this WP's own new tests don't use it.
+serde_json = { workspace = true, features = ["preserve_order"] }
+proptest = { workspace = true }
+# Test-only: decode the real Seplos LIVE_FRAME fixture to spot-check the TMS mapping against known
+# values, independent of whether `lib-parse` is also under test in the same invocation.
+lib-parse = { workspace = true, features = ["seplos"] }
+# DEV-ONLY XCDR2 byte-oracle reference for `wire_cdr_cross_oracle` — the WP0-selected reference DDS
+# serializer (its XCDR2 impl is spec-clean; scorecard in commit 97d5a01). NOT a product dependency:
+# the RTPS transport backend is undecided pending the WP4 bake-off (RustDDS vs dust-dds behind the
+# owned `lib-dds` seam), and this crate must never carry a DDS runtime. Minimal feature set — `dcps`
+# gives the `TypeSupport` derive + the XCDR2 `Cdr2LeSerializer` (via `xtypes`), deliberately WITHOUT
+# `rtps_udp_transport`/tokio/socket2 (no network stack in a unit test). `dust_dds` cannot represent
+# an ABSENT `@optional` member and emits a PRESENT one inline WITHOUT the spec `<is_present>` boolean
+# (WP0 finding) — so it is a byte-exact oracle only for the OPTIONAL-FREE topics; optional cases use
+# hand-derived spec-pinned vectors, arbitrated by CycloneDDS in WP5.
+# Default features: the `TypeSupport` derive + `create_dynamic_sample` live in dust-dds's `dcps`
+# module, which is tightly coupled to its RTPS runtime and does not compile with a trimmed feature
+# set (tried `["dcps","rtps","std"]` — dcps still pulls `dds_async`/`rtps_udp_transport`). Dev-only,
+# so the heavier tree is acceptable here; WP4 records the (transport-decision-scoped) vet exemptions.
+dust_dds = { workspace = true }
+
+[lints]
+workspace = true

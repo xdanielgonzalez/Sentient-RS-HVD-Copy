@@ -1,0 +1,18 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "lib-profile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Span-timing aggregation for on-target profiling: a fixed-capacity, no_std/no-alloc span registry (count/min/max/sum per named span) plus the measure_block! instrumentation macro. Clock- and sink-agnostic BY CONSTRUCTION — the caller supplies a ProfileClock (embassy-time on the MCU) and a ProfileSink (defmt/RTT on the MCU), so this crate depends on neither. Zero-cost when the `profile` feature is off."
+
+[dependencies]
+heapless = { workspace = true }
+
+[features]
+default = []
+# Enable on-target profiling with the measure_block! macro.
+# When off, all profiler code compiles to zero cost (macros expand to just the block).
+profile = []

@@ -1,0 +1,89 @@
+# systemd unit for the Sentient METEOR comms-module binary, packaged into the Yocto image
+# by sentient-agent_0.1.0.bb. This is the Yocto-image counterpart of distro/deploy/bin-rpi.service
+# (host/manual-deploy instructions) — kept behaviourally identical; differences from that
+# file are called out below.
+#
+# The binary signals READY=1 after startup and WATCHDOG=1 each healthy cycle (see
+# impl-app::host::notify_ready / Platform::on_cycle); a wedged or persistently unhealthy
+# loop stops petting the watchdog and systemd restarts it.
+
+[Unit]
+Description=Sentient METEOR TMS telemetry adapter (Seplos BMS -> TMS -> MQTT)
+Documentation=https://github.com/highvelocitydecisions/sentient-rs/blob/main/docs/deployment.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+# Health watchdog: the loop feeds WATCHDOG=1 only while healthy. WatchdogSec must exceed
+# one poll interval with margin (default poll = 1 s per config/sentient.toml).
+WatchdogSec=30
+Restart=on-failure
+RestartSec=5
+
+# NOTE vs. distro/deploy/bin-rpi.service: no ExecStartPre verify-binary.sh step here. The image's
+# integrity story for THIS artifact is the X.509 CMS-signed .wic (+ cosign provenance, see
+# production.yml "Sign .wic (X.509 CMS)") plus (follow-up, Phase 3) on-device verified boot /
+# dm-verity — re-running a standalone per-file CMS check against a binary already inside a signed,
+# immutable rootfs is redundant AND would pull `openssl` into core-image-minimal (size / attack
+# surface, fighting #154). Re-add an ExecStartPre check (ship ca.crt + bin-rpi.p7s + openssl) only if
+# that assumption changes.
+ExecStart=/usr/bin/bin-rpi
+Environment=SENTIENT_CONFIG=/etc/sentient/sentient.toml
+Environment=RUST_LOG=info
+
+# --- Least privilege ---
+# Static system user (created by sentient-agent_0.1.0.bb's useradd, NOT DynamicUser: a
+# recycled dynamic UID would strand ownership of the serial device + StateDirectory below).
+User=sentient
+Group=sentient
+SupplementaryGroups=dialout
+# LOAD-BEARING: do NOT set PrivateDevices=yes — it removes /dev/ttyUSB*/ttyAMA*/ttyS* along
+# with everything else, breaking the Seplos RS-485 link. DevicePolicy=closed plus an
+# explicit DeviceAllow is the correct scoped equivalent.
+PrivateDevices=no
+DevicePolicy=closed
+# TODO(verify-at-build): the exact serial node depends on the deployed adapter — a USB
+# RS-485 dongle enumerates as /dev/ttyUSB0 (matches config/sentient.toml's port default: see
+# distro/deploy/config.example.toml), a Pi HAT/GPIO-UART as /dev/ttyAMA0, or generically
+# /dev/ttyS*. Confirm against the actual [serial] port in the deployed sentient.toml and
+# keep this line in sync (it must be a static allow-list, not a glob covering all ttys).
+DeviceAllow=/dev/ttyUSB0 rw
+
+# StateDirectory=sentient creates/owns /var/lib/sentient (mode 0750, sentient:sentient) —
+# use this instead of writing state directly under /etc if bin-rpi ever needs a writable
+# runtime-state path; ProtectSystem=strict below makes everything else under / read-only.
+StateDirectory=sentient
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+UMask=0077
+
+# --- Sandbox hardening (the primary process-isolation control; re-imposes a
+# Zephyr-like tight boundary on top of Linux) ---
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# Safe here specifically because bin-rpi is a static Rust binary with no JIT/runtime
+# codegen; a W^X violation would be a bug, not a legitimate need.
+MemoryDenyWriteExecute=yes
+# A broker listening on 127.0.0.1:1883 (>=1024) needs no capabilities at all.
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
+
+# Gate in CI (Sub-task 6): `systemd-analyze security sentient-agent.service` should score
+# in the hardened range with the serial DeviceAllow still functioning end-to-end (verified
+# by the functional QEMU e2e, Sub-task 8).

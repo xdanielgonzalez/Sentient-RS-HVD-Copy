@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-grafana-provisioning
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  # Flux (not InfluxQL): native to InfluxDB v2 — InfluxQL would need imperative
+  # DBRP-mapping setup that can't be expressed in declarative provisioning.
+  # Dashboards reference uid influxdb-telemetry and query v.defaultBucket, so the
+  # bucket tracks .Values.influxdb.bucket without editing dashboard JSON.
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: InfluxDB
+        uid: influxdb-telemetry
+        type: influxdb
+        access: proxy
+        url: http://{{ include "sentient-viz.fullname" . }}-influxdb:8086
+        isDefault: true
+        jsonData:
+          version: Flux
+          organization: {{ .Values.influxdb.org }}
+          defaultBucket: {{ .Values.influxdb.bucket }}
+        secureJsonData:
+          token: $__env{INFLUX_TOKEN}
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: sentient-viz
+        folder: Sentient
+        type: file
+        allowUiUpdates: true
+        disableDeletion: false
+        options:
+          path: /var/lib/grafana/dashboards

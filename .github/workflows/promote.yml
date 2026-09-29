@@ -1,0 +1,211 @@
+# Promote a UAT pre-release CANDIDATE to a FULL GitHub Release — same version, same artifacts.
+#
+# Lifecycle: every green merge to main auto-cuts a dated pre-release candidate `vYYYY.MMDD.<run_id>`
+# (uat.yml's `promote` job -> production.yml, which builds + CMS-signs everything and publishes it as a
+# PRE-RELEASE). This workflow is the final, human-gated step: it takes a blessed candidate and flips
+# that SAME release from pre-release to full — reusing the exact version, tag, body, and the exact
+# signed artifacts that passed UAT. NO rebuild, NO re-sign: you ship precisely the bytes you tested.
+#
+# Why an edit-in-place (not a re-run of production.yml): the candidate's git tag `vX` already exists
+# (softprops created it at publish time), so promotion can't be a tag push; and re-running the build
+# would produce DIFFERENT bytes than the ones UAT validated. So we edit the existing Release object.
+#
+# Gate: an explicit manual approval via trstringer/manual-approval. (GitHub's native environment
+# required-reviewers are NOT available for PRIVATE repos on Free/Pro/Team — Enterprise only — so an
+# `environment:` gate would be inert here.) The action opens an approval issue and blocks until a
+# listed approver (jstandish or daverogers1) comments `approved`. Self-approval is allowed
+# (exclude-workflow-initiator-as-approver: false) for solo operation; set it true to force a distinct
+# second person. That approval IS the production-stage gate.
+#
+# Changelog: every green merge to main auto-cuts its OWN dated candidate tag, and git-cliff (no
+# `tag_pattern` in cliff.toml) treats every tag as a release boundary — so the candidate's own
+# release notes (generated once, at cut time, by _release-publish.yml's `--latest`) only cover
+# commits since the PREVIOUS tag, whether that was a full release or just another candidate.
+# Promoting a later candidate would otherwise ship notes missing everything that landed between
+# intermediate, never-promoted candidates. Candidate and full-release tags are the exact same git
+# tag (promotion never creates a new one), so this can't be fixed with a git-cliff tag-pattern
+# filter — only the GitHub Release's `isPrerelease` field distinguishes them. This workflow looks
+# up the last release published with `isPrerelease=false` via `gh`, then regenerates the notes
+# with git-cliff over the explicit range `<last full tag>..<this tag>`, so the promoted release
+# always reflects everything since the last FULL release, not just since the last candidate.
+# (Verified empirically: git-cliff still renders one `## [version] - date` section PER TAG it
+# walks through inside that range — e.g. every intermediate candidate that isn't being promoted
+# still gets its own heading — rather than flattening the whole range into a single section. Every
+# commit in the range is still captured, just grouped per-candidate instead of flattened; this
+# reads as an audit trail of what each candidate on the way to this promotion actually shipped,
+# which is arguably more useful than a flat list, not a bug to work around.)
+name: Promote to full release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        # WITH the leading v. The old text here said "WITHOUT leading v", which is wrong and
+        # unfollowable: `ref:` below checks out this value as a git ref, and the candidate tags
+        # production.yml creates are v-prefixed (`v2026.0731.30605863335`) — no bare tag exists, so
+        # a `v`-less value cannot resolve. Every promote run that actually succeeded passed the `v`.
+        description: Release candidate to promote, WITH leading v (e.g. v2026.0731.30605863335). Must be an existing tag cut by production.yml — NOT an image.yml `YYYYMMDD.<run_id>` pre-release.
+        required: true
+        type: string
+
+permissions: {}
+
+# Never promote the same version twice concurrently.
+concurrency:
+  group: promote-${{ inputs.version }}
+
+jobs:
+  promote:
+    name: promote ${{ inputs.version }} to full release
+    runs-on: ubuntu-latest              # gh is preinstalled here (same as uat.yml's promote job)
+    permissions:
+      contents: write                   # edit the existing Release (flip prerelease -> false)
+      issues: write                     # manual-approval opens + reads the approval issue
+    steps:
+      # FAIL FAST on the wrong candidate, BEFORE the approval gate below burns a reviewer's time.
+      # This workflow has repeatedly been dispatched with the `sentient-image` dated pre-release
+      # version that image.yml publishes (`YYYYMMDD.<run_id>`, e.g. 20260731.30598807095) instead of
+      # the release candidate production.yml cuts (`vYYYY.MMDD.<run_id>`, e.g.
+      # v2026.0731.30605863335). The image pre-releases only ever carry IMAGE assets (wic.bz2 /
+      # tar.gz / certs), so those runs sailed through checkout + manual approval and only then died
+      # on "missing required asset: bin-rpi-linux-arm64 ..." — six wasted runs across 2026-07-29..31
+      # (30579484198, 30579633289, 30579869245, 30580870564, 30609902771, 30609935758). A shape
+      # check costs nothing and names the mistake directly instead of failing three steps later
+      # with a list of absent binaries that were never supposed to be on that release.
+      - name: Validate candidate version shape
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          case "$VERSION" in
+            v[0-9][0-9][0-9][0-9].[0-9][0-9][0-9][0-9].*)
+              echo "::notice::promoting release candidate $VERSION" ;;
+            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].*)
+              echo "::error::'$VERSION' is a sentient-image pre-release (image.yml publishes YYYYMMDD.<run_id>); it carries only image assets and can never satisfy .ci/release-required-assets.txt. Pass the candidate production.yml cut instead: vYYYY.MMDD.<run_id> — e.g. v2026.0731.30605863335. List them with: gh release list"
+              exit 1 ;;
+            *)
+              echo "::error::'$VERSION' is not a release-candidate version. Expected vYYYY.MMDD.<run_id> WITH the leading v (it is used as a git ref, and only v-prefixed candidate tags exist)."
+              exit 1 ;;
+          esac
+
+      # Checkout the CANDIDATE'S OWN tag (not whatever ref triggered this dispatch — a manual
+      # workflow_dispatch defaults to the default branch tip, which has almost certainly moved past
+      # the candidate) so git-cliff below walks history ending exactly at what's being promoted, not
+      # anything merged since. fetch-depth: 0 for full history (git-cliff needs it); also reads
+      # .ci/release-required-assets.txt (the shared required-asset list, also enforced by
+      # production.yml's publish verify) — no build happens here.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.version }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Production gate: block until a second person approves (see header). Pinned by SHA (v1.13.1).
+      - name: Await manual approval (production gate)
+        uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1
+        with:
+          secret: ${{ github.token }}
+          approvers: jstandish,daverogers1
+          minimum-approvals: 1
+          # false = the initiator MAY approve their own dispatch (solo operation). The gate is still a
+          # deliberate, explicit approval — it just doesn't force a *distinct* second person. Flip to
+          # `true` for strict separation-of-duties (whoever dispatches cannot self-approve).
+          exclude-workflow-initiator-as-approver: false
+          issue-title: Promote ${{ inputs.version }} to a FULL release?
+          issue-body: |
+            Approve promoting pre-release candidate **${{ inputs.version }}** to a FULL release
+            (same version, same UAT-tested assets — no rebuild, no re-sign).
+            A reviewer OTHER than the person who started this run must approve.
+            Comment `approved` to proceed, or `denied` to cancel.
+
+      # Pinned prebuilt binary (matches the git-cliff@2.13.1 pin baked into sentient-builder,
+      # .ci/Dockerfile) — this job stays on plain ubuntu-latest (for its preinstalled `gh`, which
+      # sentient-builder does NOT carry — it's a Rust-toolchain image, git-cliff is its only
+      # non-cargo CLI tool) rather than switching container just for this one tool. Checksum pinned
+      # here (not fetched at run time) so a compromised re-upload of the release asset can't
+      # silently swap the binary — matches this repo's general signed/verified-artifact posture.
+      - name: Install git-cliff
+        run: |
+          set -euo pipefail
+          curl -sSL -o git-cliff.tar.gz \
+            https://github.com/orhun/git-cliff/releases/download/v2.13.1/git-cliff-2.13.1-x86_64-unknown-linux-gnu.tar.gz
+          echo "e716cce3a07dda41b1e370d6afbd7a59eb3d4739509fb7856aeec8da2be28c0396584e29e106141c1a1c535c1827dbc1f60417524f5cfb1da9e11f700bd00f30  git-cliff.tar.gz" | sha512sum -c -
+          tar -xzf git-cliff.tar.gz
+          install -m 755 git-cliff-2.13.1/git-cliff /usr/local/bin/git-cliff
+          git-cliff --version
+
+      - name: Flip candidate pre-release to a full release (same version + assets)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          # 1. Sanity: the release must EXIST and currently be a PRE-RELEASE. Refuse to touch a release
+          #    that is missing or already full (idempotent + guards against fat-fingered versions).
+          pre=$(gh release view "$TAG" --repo "$REPO" --json isPrerelease --jq '.isPrerelease') \
+            || { echo "::error::no release $TAG to promote — check the version input"; exit 1; }
+          [ "$pre" = "true" ] || { echo "::error::$TAG is not a pre-release (already promoted?) — nothing to do"; exit 1; }
+
+          # 2. Completeness: never promote a broken candidate. The required-asset set is the SHARED
+          #    list .ci/release-required-assets.txt (also enforced by production.yml's publish-verify
+          #    gate, so the two can no longer drift apart) — if the candidate is short a shipping
+          #    deliverable (a .wic.bz2 / .raw / its .p7s / the checksum+signing bundle), refuse.
+          gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' | sort -u > /tmp/have.txt
+          echo "=== assets on $TAG ==="; cat /tmp/have.txt
+          missing=0
+          while IFS= read -r f; do
+            case "$f" in ''|'#'*) continue ;; esac
+            grep -qxF "$f" /tmp/have.txt || { echo "::error::candidate $TAG missing required asset: $f"; missing=1; }
+          done < .ci/release-required-assets.txt
+          [ "$missing" = 0 ] || { echo "::error::candidate $TAG is incomplete — refusing to promote"; exit 1; }
+
+          # 3. Changelog: regenerate notes covering everything since the last FULL release, not just
+          #    since this candidate's own tag (see the file-header comment for why the two differ).
+          #    Find the most recently PUBLISHED release with isPrerelease=false. $TAG can't appear in
+          #    this filtered set — stage 1 already confirmed it's still isPrerelease=true right now,
+          #    before the flip in stage 4 — so no explicit self-exclusion is needed. (`gh`'s `--jq`
+          #    takes a single expression string; it doesn't expose real jq's separate `--arg` flag,
+          #    hence no parameterization here.)
+          last_full_tag=$(gh release list --repo "$REPO" --json tagName,isPrerelease,isDraft,publishedAt --limit 200 \
+            --jq '[.[] | select(.isPrerelease == false and .isDraft == false)] | sort_by(.publishedAt) | last | .tagName // empty')
+
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if [ -n "$last_full_tag" ]; then
+            range="${last_full_tag}..${TAG}"
+            echo "::notice::regenerating changelog for $range (since last full release $last_full_tag)"
+          else
+            # No prior full release — verified empirically that git-cliff does NOT accept a bare
+            # ref or a `..TAG` leading-dots form as "everything up to TAG" (the former errors
+            # trying to parse it as a raw OID; the latter silently resolves to some other range
+            # entirely, e.g. relative to the checked-out HEAD, not TAG's actual ancestry). The
+            # verified-working form is an explicit `<root commit>..TAG` range.
+            root_commit=$(git rev-list --max-parents=0 "$TAG" | tail -1)
+            range="${root_commit}..${TAG}"
+            echo "::notice::no prior full release found — regenerating changelog for full history ($range)"
+          fi
+          git-cliff --config cliff.toml "$range" --tag "$TAG" --strip header --output RELEASE_NOTES.md || true
+
+          # 4. Promote IN PLACE: same tag, same assets. Flip prerelease -> false, mark it the repo's
+          #    latest release, drop the "(pre-release — self-signed)" title banner, and — if git-cliff
+          #    produced notes — replace the body with the full-range changelog; on any git-cliff
+          #    failure (empty output), leave the existing (candidate-scoped) body alone rather than
+          #    blanking it, mirroring _release-publish.yml's fallback posture.
+          notes_flag=()
+          if [ -s RELEASE_NOTES.md ]; then
+            notes_flag=(--notes-file RELEASE_NOTES.md)
+          else
+            echo "::warning::git-cliff produced no notes — leaving $TAG's existing release body unchanged"
+          fi
+          gh release edit "$TAG" --repo "$REPO" \
+            --prerelease=false \
+            --latest \
+            --title "sentient-rs $TAG" \
+            "${notes_flag[@]}"
+
+          # 5. Confirm the flip actually landed (gh release edit is quiet on success).
+          now=$(gh release view "$TAG" --repo "$REPO" --json isPrerelease --jq '.isPrerelease')
+          [ "$now" = "false" ] || { echo "::error::$TAG still shows prerelease=$now after edit"; exit 1; }
+          url=$(gh release view "$TAG" --repo "$REPO" --json url --jq '.url')
+          echo "::notice::promoted $TAG to a FULL release (same version + assets, prerelease->false, marked latest): $url"

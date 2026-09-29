@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CycloneDDS config for the conformance probe (WP7a). Consumed via CYCLONEDDS_URI=file:///...
+  (compose.yaml). Forces IPv6-only UDP and the CUSTOM SPDP multicast group the dust_dds transport
+  advertises, so the stock CycloneDDS CLI (`cyclonedds ls/typeof/subscribe`) discovers the adapter's
+  participant over the SAME link the bin-rpi writers use.
+
+  Element paths verified against cyclonedds.io/docs/cyclonedds config_file_reference:
+    General/Transport = udp6              -> IPv6-only UDP (MIL-STD-3071 D.1 RTPS/UDP over IPv6).
+    General/Interfaces/NetworkInterface  -> bind eth0 (shared host netns; lo has no MULTICAST flag).
+    General/AllowMulticast = spdp        -> multicast for SPDP discovery only; SEDP + user DATA go
+                                            unicast, matching the dust_dds transport factory's
+                                            locator advertisement (empty default_multicast list,
+                                            metatraffic multicast = ff02::1234 only).
+    Discovery/SPDPMulticastAddress = ff02::1234  -> MUST equal lib_dds's WP4 SPDP group
+                                            (crates/lib-dds/src/impl_dds_config.rs) or the two
+                                            stacks never see each other's SPDP announcements.
+    Discovery/ParticipantIndex = auto    -> let CycloneDDS pick its participant index.
+-->
+<CycloneDDS>
+  <Domain Id="any">
+    <General>
+      <Transport>udp6</Transport>
+      <AllowMulticast>spdp</AllowMulticast>
+      <Interfaces>
+        <NetworkInterface name="eth0"/>
+      </Interfaces>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <SPDPMulticastAddress>ff02::1234</SPDPMulticastAddress>
+    </Discovery>
+    <Tracing>
+      <Verbosity>warning</Verbosity>
+      <OutputFile>stderr</OutputFile>
+    </Tracing>
+  </Domain>
+</CycloneDDS>

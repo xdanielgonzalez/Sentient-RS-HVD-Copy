@@ -1,0 +1,9 @@
+# Fixed namespace for the viz-stack UAT lane (uat.yml `viz-uat` job). One namespace + one
+# fixed helm release name — runs are serialized by uat.yml's concurrency group, and the
+# always-run teardown uninstalls the release, so nothing accretes here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: viz-uat
+  labels:
+    app.kubernetes.io/part-of: sentient-viz-uat

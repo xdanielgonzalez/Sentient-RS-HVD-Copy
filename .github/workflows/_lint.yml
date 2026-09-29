@@ -1,0 +1,52 @@
+name: _lint (reusable)
+
+# Reusable workflow: Stage-1 gate (fmt + clippy). Called only via `workflow_call` — never triggers
+# directly on push/PR. Imported by ci.yml as the `lint` job, which everything else `needs:`.
+
+# No secrets: the shared setup action only wires the NFS-backed sccache env (no MinIO cache
+# creds needed since the S3 target/ cache was dropped — see .github/actions/setup).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint:
+    name: fmt · clippy
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      # rustfmt/clippy and `just` are baked into sentient-builder (.ci/Dockerfile) — no
+      # rust-components / install-just needed here anymore.
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: just lint
+        run: just lint
+
+      # Warm the SHARED sccache before ci.yml's fan-out. Every heavy lane (`test`, `security`,
+      # `quality`, `dds-interop`, `supply-chain`) declares `needs: [lint]`, so they all start
+      # together the moment this job finishes — and on a cold or dependency-changed cache each of
+      # them compiles the identical dependency graph concurrently. Concurrent identical compiles all
+      # MISS (no lane has written the objects yet), so the work is done five times over. Doing it
+      # once here, in the lane they already wait on, makes those five lanes cache hits instead.
+      #
+      # Compile-only (`--no-run`) and flag-matched to `just test` — see the `warm-cache` recipe's own
+      # comment for why the flags must stay in lockstep. Runs AFTER `just lint` so a formatting or
+      # clippy failure still fails fast without paying for a build first. `continue-on-error` because
+      # this is an optimisation, never a gate: if it breaks, the downstream lanes still compile what
+      # they need and `logic-tests-gate` remains the real signal. On a warm cache this is mostly
+      # cache hits and costs little.
+      - name: Warm shared sccache for the downstream fan-out
+        continue-on-error: true
+        run: just warm-cache

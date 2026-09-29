@@ -1,0 +1,48 @@
+[package]
+name = "sentient-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# NOTE: this crate declares its own empty [workspace] below (standard cargo-fuzz layout), so it
+# cannot inherit ../../Cargo.toml's [workspace.dependencies] — versions are pinned explicitly here,
+# matching the root workspace's pins.
+heapless = "0.8"
+
+# Relocated under test-e2e/fuzz/ in #99 (test-hygiene reorg) — the crate-under-test path deps
+# are now two levels up (test-e2e/fuzz/ -> test-e2e/ -> repo root -> lib-parse).
+[dependencies.lib-parse]
+path = "../../lib-parse"
+
+[dependencies.lib-mapping]
+path = "../../lib-mapping"
+
+# cargo-fuzz crates carry their own empty `[workspace]` table so cargo never tries to unify them
+# into the parent workspace at ../../Cargo.toml (which also does not list `fuzz` in `members`).
+[workspace]
+
+[[bin]]
+name = "fuzz_parse_telemetry"
+path = "fuzz_targets/fuzz_parse_telemetry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parse_command"
+path = "fuzz_targets/fuzz_parse_command.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_canonical"
+path = "fuzz_targets/fuzz_canonical.rs"
+test = false
+doc = false
+bench = false

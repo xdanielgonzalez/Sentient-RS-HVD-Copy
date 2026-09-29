@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-grafana
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  replicas: 1
+  {{- if .Values.tailscale.enabled }}
+  # One tailnet node identity lives in ONE state Secret — two live pods would fight over it.
+  # A moment of dashboard downtime on rollout is fine (same tradeoff as the docs site).
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "grafana") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "grafana") | nindent 8 }}
+      annotations:
+        checksum/provisioning: {{ include (print $.Template.BasePath "/grafana-provisioning-configmap.yaml") . | sha256sum }}
+        checksum/dashboards: {{ include (print $.Template.BasePath "/grafana-dashboards-configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/grafana-secret.yaml") . | sha256sum }}
+        # The datasource reads INFLUX_TOKEN from the influxdb Secret — roll on token change too.
+        checksum/influxdb-secret: {{ include (print $.Template.BasePath "/influxdb-secret.yaml") . | sha256sum }}
+        {{- if .Values.tailscale.enabled }}
+        checksum/tailscale-serve: {{ include (print $.Template.BasePath "/tailscale-serve-configmap.yaml") . | sha256sum }}
+        {{- end }}
+    spec:
+      enableServiceLinks: false
+      {{- if .Values.tailscale.enabled }}
+      serviceAccountName: {{ include "sentient-viz.fullname" . }}-tailscale
+      {{- end }}
+      containers:
+        - name: grafana
+          image: "{{ .Values.images.grafana.repository }}:{{ .Values.images.grafana.tag }}"
+          imagePullPolicy: {{ .Values.images.grafana.pullPolicy }}
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sentient-viz.fullname" . }}-grafana
+                  key: admin-user
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sentient-viz.fullname" . }}-grafana
+                  key: admin-password
+            # Consumed by $__env{INFLUX_TOKEN} in the datasource provisioning.
+            - name: INFLUX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sentient-viz.fullname" . }}-influxdb
+                  key: admin-token
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            # All state is provisioned — nothing in /var/lib/grafana worth persisting.
+            - name: storage
+              mountPath: /var/lib/grafana
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/datasources/datasources.yaml
+              subPath: datasources.yaml
+              readOnly: true
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/dashboards/dashboards.yaml
+              subPath: dashboards.yaml
+              readOnly: true
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+              readOnly: true
+          resources:
+            {{- toYaml .Values.grafana.resources | nindent 12 }}
+        {{- if .Values.tailscale.enabled }}
+        # Tailnet exposure sidecar — semantics mirror .ci/k8s/docs/deployment.yaml:
+        # TS_USERSPACE (unprivileged, no /dev/net/tun), TS_KUBE_SECRET node-state persistence
+        # (identity survives restarts; TS_AUTH_ONCE consumes the auth key only on first boot),
+        # TS_AUTHKEY optional so the pod still starts after the key Secret is deleted
+        # post-enrollment, containerboot /healthz readiness = "has a tailnet IP".
+        - name: tailscale
+          image: "{{ .Values.tailscale.image.repository }}:{{ .Values.tailscale.image.tag }}"
+          imagePullPolicy: {{ .Values.tailscale.image.pullPolicy }}
+          env:
+            - name: TS_HOSTNAME
+              value: {{ .Values.tailscale.hostname | quote }}
+            - name: TS_KUBE_SECRET
+              value: {{ include "sentient-viz.fullname" . }}-tailscale-state
+            - name: TS_AUTH_ONCE
+              value: "true"
+            - name: TS_USERSPACE
+              value: "true"
+            - name: TS_SERVE_CONFIG
+              value: /etc/tailscale/serve.json
+            - name: TS_ENABLE_HEALTH_CHECK
+              value: "true"
+            - name: TS_LOCAL_ADDR_PORT
+              value: "[::]:9002"
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.tailscale.authSecretName | default (printf "%s-tailscale-auth" (include "sentient-viz.fullname" .)) }}
+                  key: TS_AUTHKEY
+                  optional: true
+          volumeMounts:
+            - name: tailscale-serve
+              mountPath: /etc/tailscale
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.tailscale.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: storage
+          emptyDir: {}
+        {{- if .Values.tailscale.enabled }}
+        - name: tailscale-serve
+          configMap:
+            name: {{ include "sentient-viz.fullname" . }}-tailscale-serve
+        {{- end }}
+        - name: provisioning
+          configMap:
+            name: {{ include "sentient-viz.fullname" . }}-grafana-provisioning
+        - name: dashboards
+          configMap:
+            name: {{ include "sentient-viz.fullname" . }}-grafana-dashboards

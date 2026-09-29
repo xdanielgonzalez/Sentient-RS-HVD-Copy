@@ -1,0 +1,78 @@
+#!/usr/sbin/nft -f
+#
+# Sentient METEOR — default-drop firewall for the shipping Yocto Linux image.
+# See the owning bbappend in this directory for install wiring + rationale; see
+# docs/deployment.md §4-§5 and docs/security.md §1.1-§1.3 for why the embedded broker (1883) is
+# loopback-only and the only outbound network traffic this device originates is the mosquitto
+# TLS bridge to the private cloud on 8883.
+#
+# Default posture: DROP everything inbound except loopback and already-established/related
+# connections. No inbound MQTT port is opened by default — this device does not need to accept
+# inbound MQTT connections in the shipped configuration. See the commented-out rule at the bottom
+# for the deliberate, documented exception (widening the broker bind off loopback).
+
+flush ruleset
+
+table inet filter {
+	chain input {
+		type filter hook input priority filter; policy drop;
+
+		# Loopback is always allowed — the mosquitto bridge talks to the embedded rumqttd
+		# broker over 127.0.0.1:1883, and systemd/dbus-adjacent local traffic rides loopback too.
+		iif lo accept
+
+		# Already-established / related connections (e.g. the reply traffic for the mosquitto
+		# bridge's outbound 8883 TLS connection to the cloud) — outbound connections this device
+		# initiates are not blocked by this INPUT chain, only new *inbound* connections are.
+		ct state established,related accept
+
+		# Drop anything nftables' conntrack thinks is invalid outright (spoofed/malformed).
+		ct state invalid drop
+
+		# ICMP/ICMPv6 essentials (path MTU discovery, neighbor discovery) — comment out if a
+		# stricter posture is required and ICMP is not needed for the deployment's network path.
+		ip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded } accept
+		ip6 nexthdr icmpv6 icmpv6 type { echo-request, nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert, destination-unreachable, time-exceeded } accept
+
+		# --- No inbound MQTT ACCEPT by default ---
+		# The embedded broker (127.0.0.1:1883) is loopback-bound in code
+		# (lib-mqtt/src/broker.rs default, docs/security.md §1.1) and does not need a LAN-facing
+		# rule at all in the default configuration. If a deployment deliberately widens
+		# `[broker] host` off loopback (docs/deployment.md §4 "Broker bind is loopback by
+		# design" — an operational decision, not the default), uncomment and scope one of the
+		# rules below to the exact LAN/VLAN subnet the authorized MQTT subscriber lives on. Do
+		# NOT accept 0.0.0.0/0 — that reopens the unauthenticated-plaintext broker to the world.
+		#
+		# tcp dport 1883 ip saddr 192.0.2.0/24 accept   # example: LAN subnet only, replace with the real subnet
+		# tcp dport 1883 accept                          # NOT RECOMMENDED: unscoped, matches plan's generic template only
+
+		# If a future deployment terminates TLS directly on the embedded broker (rather than
+		# relying solely on the mosquitto bridge's outbound 8883) and needs to accept inbound
+		# MQTTS from a specific subnet, add a similarly scoped rule for that port here — do not
+		# open 8883 inbound by default; today 8883 is only used OUTBOUND by the mosquitto bridge.
+		# tcp dport 8883 ip saddr 192.0.2.0/24 accept    # example only — not enabled by default
+
+		# Everything else inbound is dropped by the chain policy above.
+	}
+
+	chain forward {
+		type filter hook forward priority filter; policy drop;
+		# This device is an endpoint, not a router — no forwarding needed.
+	}
+
+	chain output {
+		type filter hook output priority filter; policy accept;
+		# Outbound is intentionally unrestricted at the nftables layer: the mosquitto bridge's
+		# TLS connection to the private-cloud endpoint (8883) and DNS/NTP are all outbound
+		# traffic this device must be able to initiate. Systemd-unit-level sandboxing
+		# (RestrictAddressFamilies etc. on sentient-agent.service — see distro/deploy/bin-rpi.service
+		# and distro/HARDENING.md) is the finer-grained control on what the agent process itself
+		# may do; this firewall's job is perimeter default-drop on the INPUT side.
+	}
+}
+
+# TODO(verify-at-build): confirm the nftables package + systemd service on the pinned wrynose
+# meta-networking layer load this ruleset from the path the bbappend installs it to (see
+# `do_install:append` in the owning bbappend) — the shebang line above matters only if this file
+# is also expected to be directly executable; when loaded via `nft -f <path>` from a systemd unit
+# ExecStart, the shebang is inert but kept for convention / manual `sudo ./sentient.nft` testing.

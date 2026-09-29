@@ -1,0 +1,114 @@
+---
+source: lib-mqtt/tests/e2e_l1.rs
+expression: hw_json
+---
+{
+  "device_id": "METEOR-001",
+  "energy_storage": {
+    "average_temperature": 25.5,
+    "max_temperature": 26.0,
+    "min_temperature": 25.0,
+    "run_time": null,
+    "storage_cells": [
+      {
+        "cell_number": 0,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 25.0,
+        "voltage": 3.8
+      },
+      {
+        "cell_number": 1,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 25.2,
+        "voltage": 3.801
+      },
+      {
+        "cell_number": 2,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 25.4,
+        "voltage": 3.802
+      },
+      {
+        "cell_number": 3,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 25.6,
+        "voltage": 3.803
+      },
+      {
+        "cell_number": 4,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 25.8,
+        "voltage": 3.804
+      },
+      {
+        "cell_number": 5,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 26.0,
+        "voltage": 3.805
+      },
+      {
+        "cell_number": 6,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 26.0,
+        "voltage": 3.806
+      },
+      {
+        "cell_number": 7,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 26.0,
+        "voltage": 3.807
+      },
+      {
+        "cell_number": 8,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 26.0,
+        "voltage": 3.808
+      },
+      {
+        "cell_number": 9,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 26.0,
+        "voltage": 3.809
+      },
+      {
+        "cell_number": 10,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 26.0,
+        "voltage": 3.81
+      },
+      {
+        "cell_number": 11,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 26.0,
+        "voltage": 3.811
+      },
+      {
+        "cell_number": 12,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 26.0,
+        "voltage": 3.812
+      },
+      {
+        "cell_number": 13,
+        "cycle_counter": 2.0,
+        "state_of_charge": 0.775,
+        "temperature": 26.0,
+        "voltage": 3.813
+      }
+    ]
+  },
+  "timestamp": "[time]"
+}

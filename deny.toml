@@ -1,0 +1,130 @@
+# cargo-deny policy for sentient-rs — license allowlist, advisory gate, source enforcement.
+# Run: `just deny`  (or `cargo deny check`).
+
+[advisories]
+# RustSec advisory DB. Known CVEs / soundness issues fail the build.
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+# Only flag unmaintained crates that are direct workspace deps — transitive unmaintained crates
+# (paste, proc-macro-error, atomic-polyfill, bare-metal, yaml-rust, rustls-pemfile) are pulled by
+# rumqtt/embedded deps we don't control; tracked, not gated.
+unmaintained = "workspace"
+# Accepted, tracked rustls-webpki CVEs, unfixable in range (rustls 0.22 -> webpki 0.102.x; fix needs
+# >=0.103). Originally reachable only via the rumqtt MQTT-TLS path; now ALSO reachable via
+# `lib-link`'s own `tls` feature, which pins the same rustls 0.22 (deliberately, to avoid a
+# third rustls major — see the workspace `rustls` dependency comment). All four are CRL/name-
+# constraint verification edge cases; the owned `TlsStage` bring-up tier does no CRL checking and its
+# one embedded cert has no name-constraints extension or wildcard names, so none is exercised in
+# practice today, but the exemption is genuinely broader post-green than the original note implied.
+# Removed when webpki >=0.103 becomes reachable (either rumqtt is replaced, or rustls is bumped past
+# 0.22 workspace-wide). Mirrors .cargo/audit.toml.
+ignore = [
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+]
+
+[licenses]
+# Permissive-only allowlist for a proprietary, safety-critical binary. Copyleft is not allowed
+# in the linked dependency graph. Add exceptions crate-by-crate below if ever needed.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "Unlicense",             # public-domain-equivalent, permissive
+    "0BSD",                  # BSD Zero Clause, permissive
+    "LicenseRef-Proprietary", # our own first-party workspace crates
+    "MPL-2.0",               # weak/file-level copyleft (serialport) — link-safe for a proprietary binary
+]
+confidence-threshold = 0.9
+
+[bans]
+# Duplicate transitive versions bloat the binary — warn so we notice, don't hard-fail yet.
+multiple-versions = "warn"
+# Documented, intentional duplicate-version exemptions. Every entry below is one `cargo deny check
+# bans` actually reports today (verified on the owned-stack green branch, 2026-07-06) — if a future
+# run reports a duplicate NOT listed here, that's a new, uninvestigated duplicate, not something to
+# reflexively add. Two buckets:
+#
+# (a) rumqttd/rumqttc's own dependency tree (config parsing, metrics, HTTP, the legacy MQTT-TLS
+# stack) — every one of these disappears together the day the owned net-stack (this branch) fully
+# replaces rumqttd/rumqttc client+broker usage; see handoff-netpipeline.md. `rustls`/`rustls-webpki`
+# are specifically the legacy MQTT-TLS stack rumqttd pins via tokio-rustls 0.24, alongside the owned
+# stack's own `rustls` 0.22 (`lib-link`'s `tls` feature) and rumqttc's dev-only 0.22 pin — three
+# rustls majors would exist without this, but 0.23 (what the owned stack originally added) was
+# avoided by pinning to 0.22, which is already in the tree, so only the pre-existing 0.21/0.22 split
+# remains.
+#
+# (b) genuinely-unavoidable transitive majors: pure upstream version-skew where two independent
+# dependency subtrees pin incompatible majors of a common low-level crate and neither side is a
+# direct dependency of ours to bump.
+skip = [
+    { crate = "rustls@0.21.12", reason = "rumqttd's MQTT-TLS stack (tokio-rustls 0.24); removed with rumqttd" },
+    { crate = "rustls-webpki@0.101.7", reason = "paired with rumqttd's rustls 0.21; removed with rumqttd" },
+    { crate = "ahash@0.7.8", reason = "rumqttd's config/rust-ini chain; removed with rumqttd" },
+    { crate = "base64@0.13.1", reason = "rumqttd's config/ron chain; removed with rumqttd" },
+    { crate = "hashbrown@0.12.3", reason = "rumqttd's indexmap-1.x chain; removed with rumqttd" },
+    { crate = "hashbrown@0.13.1", reason = "rumqttd's metrics-util chain; removed with rumqttd" },
+    { crate = "indexmap@1.9.3", reason = "rumqttd's metrics-exporter-prometheus chain; removed with rumqttd" },
+    { crate = "socket2@0.5.10", reason = "rumqttd's hyper-0.14/axum-0.6 chain; removed with rumqttd" },
+    { crate = "toml@0.5.11", reason = "rumqttd's config crate; removed with rumqttd" },
+    { crate = "syn@1.0.109", reason = "rumqttd's x509-parser/asn1-rs-derive chain; removed with rumqttd" },
+
+    { crate = "bitflags@1.3.2", reason = "still pinned by several transitive deps (axum 0.6, nix 0.26 via serialport); upstream-forced" },
+    { crate = "thiserror@1.0.69", reason = "still pinned by transitive deps not yet on thiserror 2; upstream-forced" },
+    { crate = "thiserror-impl@1.0.69", reason = "paired with the thiserror 1.x pin above" },
+    { crate = "synstructure@0.12.6", reason = "pinned to syn 1.x by its own dependents; upstream-forced" },
+    { crate = "nix@0.26.4", reason = "serialport's own nix pin, older than mio-serial's; upstream-forced" },
+    { crate = "nix@0.31.3", reason = "mio-serial's own nix pin, newer than our direct nix 0.29 dev-dep; upstream-forced" },
+    { crate = "windows-sys@0.52.0", reason = "pinned transitively by ring/serialport/the older hyper-0.14 stack; upstream-forced" },
+    { crate = "heapless@0.8.0", reason = "serde-json-core 0.6 pins heapless \"0.8\" exactly; no newer serde-json-core release exists yet" },
+]
+# Crates we deliberately avoid — documents intent + fails the bans check if one appears transitively.
+# We use rustls (ring backend), never OpenSSL; there is no openssl in the tree today, so this is a free
+# guardrail (matches cargo-deny's own default recommendation). See docs/rust-hardening.md.
+deny = [
+    { crate = "openssl", use-instead = "rustls" },
+    { crate = "openssl-sys", use-instead = "rustls" },
+
+    # --- Workspace layering / dependency-direction (clean-architecture DIP) -----------------------
+    # `wrappers` lists the ONLY crates permitted to directly depend on the guarded crate — enforced
+    # over workspace path deps too (empirically verified on cargo-deny 0.20.2; the open upstream
+    # issue #343 claiming bans skip path deps no longer reproduces — pin the version + keep these
+    # guards as the regression signal). A new LOWER-layer crate depending on one of these fails the
+    # bans check ("higher layer must not sit below a lower one"). Foundation/domain crates are NOT
+    # guarded — they are meant to be depended on widely. Orphan/roster rules live in
+    # `.ci/scripts/crate_graph_audit.py` (no maintained tool covers those). Lists = current direct
+    # dependents (normal + dev); adding a legitimate new dependent is a reviewed edit here.
+    # bin-rpi-platform (the RPi platform adapter, ADR 0009 WS3) is deliberately ABSENT here — it
+    # takes zero impl-app dependency, normal or dev; that inversion is the point cargo-deny enforces.
+    { crate = "impl-app", reason = "app layer: shipping bins, the zephyr adapter (arena handoff only), and test crates",
+      wrappers = ["bin-rpi", "test-acceptance", "test-e2e"] },
+    { crate = "lib-mapping", reason = "bridge layer: no domain/foundation crate may depend upward on it",
+      wrappers = ["spec-app", "impl-app", "lib-mqtt", "bin-rpi", "bin-rpi-platform", "bin-mcu-platform", "test-acceptance", "test-e2e"] },
+    { crate = "lib-mqtt", reason = "service layer: only app/bin/test may depend on it",
+      wrappers = ["bin-rpi-platform", "bin-rpi", "test-acceptance", "test-e2e", "test-kit"] },
+    # Service layer (DDS/RTPS transport, Pi-only). No dependents in WP4 (transient orphan — see
+    # .ci/crate-graph.toml known_debt); the WP6 Pi taps that consume it are forward-declared here so
+    # the guard is ready when they land (an allowed-but-not-yet-present wrapper is harmless).
+    { crate = "lib-dds", reason = "service layer: only app/bin/test may depend on it",
+      wrappers = ["bin-rpi-platform", "bin-rpi", "test-acceptance", "test-e2e", "test-kit"] },
+]
+# Deny wildcard version reqs on EXTERNAL crates, but exempt first-party workspace path deps
+# (inter-crate `{ path = ... }` deps have no version req and read as a wildcard).
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Deny arbitrary git URLs / unconfigured registries. The kellnr mirror (.cargo/config.toml) is a
+# transparent source-*replacement* for crates.io, so the lockfile still records the canonical
+# crates.io index as each crate's source — that is what cargo-deny matches on, so it must be the
+# allowed registry (listing only the kellnr URL rejected every crate: source-not-allowed).
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

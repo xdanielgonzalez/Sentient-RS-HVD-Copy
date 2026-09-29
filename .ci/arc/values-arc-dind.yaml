@@ -1,0 +1,94 @@
+# arc-dind — gha-runner-scale-set 0.14.2 values, dind mode for docker-building lanes
+# (builder-image.yml, docs.yml publish). Compile/test lanes stay on arc-runner-set (kubernetes
+# mode) — this set exists ONLY for jobs that need a docker daemon (buildx).
+#
+# HAND-ROLLED template instead of containerMode.type: dind, for ONE reason: dockerd needs
+# --mtu=1450 (the flannel pod overlay is 1450; the chart's fixed dind args give docker0 MTU 1500,
+# which blackholes large downloads — apt, rustup, Yocto fetches). A live `kubectl patch` of the
+# generated spec REVERTS on every helm upgrade (learned the hard way), so the MTU flag must live
+# HERE, in the release values. Everything else below is a verbatim transcription of what chart
+# 0.14.2 renders for containerMode dind (helm template, 2026-07-17) — do not "simplify" it: the
+# runner waits on the dind sidecar socket, and the externals init-copy is what makes the runner's
+# docker CLI work. serviceAccountName/restartPolicy are chart-injected; omit them here.
+# (Hand-rolling is safe in dind mode — the auto-RBAC warning in values-arc-runner-set.yaml is
+# about KUBERNETES mode's job-pod hook permissions, which dind doesn't use.)
+#
+# min 0 (scales from zero — these lanes are occasional), max 2 (small pool; see the
+# serialize-heavy-runs rule).
+#
+# Apply (on build-github):
+#   helm upgrade --install arc-dind \
+#     oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set \
+#     --version 0.14.2 -n arc-runners -f ~/arc/values-arc-dind.yaml
+#
+# PREREQUISITE: secret arc-runner-set-github in arc-runners (shared with arc-runner-set).
+# HISTORY: a prior arc-dind install (2026-07-12, legacy arc-runner-runners ns) was half-removed —
+# its GitHub-side scale set was deleted, leaving an orphaned Error listener + Role/RoleBinding;
+# cleaned up 2026-07-17 before this install.
+
+githubConfigUrl: https://github.com/High-Velocity-Decisions
+githubConfigSecret: arc-runner-set-github   # pre-created Secret — token not stored here
+minRunners: 0
+maxRunners: 2
+
+template:
+  spec:
+    initContainers:
+      - name: init-dind-externals
+        image: ghcr.io/actions/actions-runner:latest
+        command: ["cp"]
+        args: ["-r", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+        volumeMounts:
+          - name: dind-externals
+            mountPath: /home/runner/tmpDir
+      # Native sidecar (initContainer + restartPolicy Always), exactly as the chart renders it —
+      # plus the one line this whole file exists for: --mtu=1450.
+      - name: dind
+        image: docker:dind
+        args:
+          - dockerd
+          - --host=unix:///var/run/docker.sock
+          - --group=$(DOCKER_GROUP_GID)
+          - --mtu=1450
+        env:
+          - name: DOCKER_GROUP_GID
+            value: "123"
+        securityContext:
+          privileged: true
+        restartPolicy: Always
+        startupProbe:
+          exec:
+            command:
+              - docker
+              - info
+          initialDelaySeconds: 0
+          failureThreshold: 24
+          periodSeconds: 5
+        volumeMounts:
+          - name: work
+            mountPath: /home/runner/_work
+          - name: dind-sock
+            mountPath: /var/run
+          - name: dind-externals
+            mountPath: /home/runner/externals
+    containers:
+      - name: runner
+        image: ghcr.io/actions/actions-runner:latest
+        command: ["/home/runner/run.sh"]
+        env:
+          - name: DOCKER_HOST
+            value: unix:///var/run/docker.sock
+          - name: RUNNER_WAIT_FOR_DOCKER_IN_SECONDS
+            value: "120"
+        volumeMounts:
+          - name: work
+            mountPath: /home/runner/_work
+          - name: dind-sock
+            mountPath: /var/run
+    volumes:
+      - name: dind-sock
+        emptyDir: {}
+      - name: dind-externals
+        emptyDir: {}
+      - name: work
+        emptyDir: {}

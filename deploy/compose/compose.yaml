@@ -1,0 +1,104 @@
+# Local quickstart for the MQTT visualization + simulation stack — the
+# docker-compose twin of deploy/charts/sentient-viz (which remains the k8s path).
+# Engine-agnostic: works with `docker compose` or `podman-compose`.
+#
+#   just viz-images            # build sentient-viz-app:local + sentient-viz-sim:local
+#   just viz-up                # bring the stack up (podman-compose by default)
+#   http://localhost:3000      # Grafana, admin/admin
+#   just viz-fault high_voltage_protection
+#   just viz-down
+#
+# Demo credentials mirror deploy/charts/sentient-viz/values.yaml — DEMO ONLY.
+# No healthchecks by design: every consumer retries internally (socat retries the
+# sim, the greengrass-bridge retries the device broker, telegraf retries both
+# brokers + influx, grafana lazy-connects the datasource) — same resilience
+# posture as the chart, minus probes compose can't act on anyway.
+
+services:
+  sim:
+    image: sentient-viz-sim:local
+    environment:
+      SIM_PORT: "5001"
+      SIM_PACE: "19200"
+      # SIM_TURNAROUND_MS: "20"    # only honored with SIM_PACE > 0
+    restart: unless-stopped
+
+  app:
+    image: sentient-viz-app:local
+    environment:
+      SIM_HOST: sim
+      SIM_PORT: "5001"
+      PTY_LINK: /tmp/ttySIM
+      RUST_LOG: info
+      SENTIENT_CONFIG: /etc/sentient/sentient.toml
+    volumes:
+      - ./configs/sentient.toml:/etc/sentient/sentient.toml:ro
+    ports:
+      - "127.0.0.1:1883:1883" # MQTT — plaintext/no-auth demo broker, loopback only
+    depends_on: [sim]
+    restart: unless-stopped
+
+  # The Green Grass Bridge — mosquitto pulling the Greengrass-bound telemetry/# namespace
+  # off the device broker, exactly like the on-Pi relay would feed an AWS IoT Greengrass
+  # core. Telegraf subscribes here so Grafana can show "what would be sent to Greengrass"
+  # next to the device-direct stream (parity). See configs/greengrass-bridge.conf.
+  greengrass-bridge:
+    image: eclipse-mosquitto:2.0
+    volumes:
+      - ./configs/greengrass-bridge.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      - "127.0.0.1:1884:1883" # debug peek at the Greengrass-bound stream, loopback only
+    depends_on: [app]
+    restart: unless-stopped
+
+  influxdb:
+    image: influxdb:2.7
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup # idempotent — skipped once the volume is initialized
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: sentient-demo
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: sentient-demo-token
+      DOCKER_INFLUXDB_INIT_ORG: sentient
+      DOCKER_INFLUXDB_INIT_BUCKET: telemetry
+      # DOCKER_INFLUXDB_INIT_RETENTION: 30d  # unset = infinite retention (full history)
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    ports:
+      - "127.0.0.1:8086:8086"
+    restart: unless-stopped
+
+  telegraf:
+    image: telegraf:1.35
+    # Run as the image's telegraf user directly — the entrypoint's root->setpriv
+    # drop hits EPERM under rootless podman; with a non-root user it skips it.
+    user: telegraf
+    environment:
+      MQTT_URL: tcp://app:1883
+      GREENGRASS_MQTT_URL: tcp://greengrass-bridge:1883
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_ORG: sentient
+      INFLUX_BUCKET: telemetry
+      INFLUX_TOKEN: sentient-demo-token
+    volumes:
+      - ./configs/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    depends_on: [app, greengrass-bridge, influxdb]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      INFLUX_TOKEN: sentient-demo-token # read by $__env{INFLUX_TOKEN} in datasources.yaml
+    volumes:
+      - ./configs/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - ./configs/grafana-dashboard-provider.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro
+      # Single source with the Helm chart — same JSONs the chart ships via ConfigMap.
+      - ../charts/sentient-viz/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [influxdb]
+    restart: unless-stopped
+
+volumes:
+  influxdb-data:

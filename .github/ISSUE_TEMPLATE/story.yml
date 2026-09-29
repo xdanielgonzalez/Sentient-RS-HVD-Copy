@@ -1,0 +1,71 @@
+name: "Story"
+description: "A user-facing or feature-level chunk of work under an Epic (e.g. STORY #159 under EPIC #6)."
+title: "STORY: "
+labels: ["story"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A Story sits under an Epic and breaks down into one or more Tasks (each Task should be
+        single-PR-sized). Link the parent epic below so rollups stay accurate.
+
+  - type: input
+    id: parent_epic
+    attributes:
+      label: Parent epic
+      description: Issue number of the parent Epic.
+      placeholder: "#6"
+    validations:
+      required: true
+
+  - type: textarea
+    id: user_story
+    attributes:
+      label: User story
+      description: State it in the standard form.
+      placeholder: |
+        As a <role — e.g. field technician / fleet operator / downstream integrator>,
+        I want <capability>,
+        so that <benefit>.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: Concrete, testable conditions for calling this story done.
+      placeholder: |
+        - `bitbake sentient-image` builds for raspberrypi4-64/raspberrypi5 + qemuarm64/qemux86-64
+        - Functional QEMU e2e (sim Seplos -> external MQTT client asserts TMS) gates the release
+        - Existing `just ci` gates unaffected; MCU `west build` still produces firmware
+    validations:
+      required: true
+
+  - type: textarea
+    id: tasks_checklist
+    attributes:
+      label: Tasks
+      description: Checklist of child Tasks. Add rows as tasks are filed; link the issue number.
+      placeholder: |
+        - [ ] #NNN — Task title
+        - [ ] #NNN — Task title
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: What this story explicitly does not cover, and where that work is tracked instead (if anywhere).
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Design notes, links to decision records/plans, cross-references (e.g. a security cross-ref epic, related docs).
+    validations:
+      required: false

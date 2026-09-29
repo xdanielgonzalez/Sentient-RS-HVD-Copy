@@ -1,0 +1,111 @@
+# The docs-site pod: nginx (the rendered mdbook image CI pushes to Harbor) + a tailscale sidecar
+# that joins the tailnet as machine `sentient-docs` and serves https://sentient-docs.<tailnet>.ts.net
+# by proxying to nginx on localhost. No Service/Ingress — the tailnet is the only way in.
+#
+# strategy Recreate, replicas 1: the sidecar's node identity lives in ONE state Secret
+# (TS_KUBE_SECRET) — two live pods would fight over the same tailnet node. A moment of downtime on
+# rollout is fine for docs.
+#
+# Sidecar specifics (verified against tailscale.com/docs/features/containers/docker/docker-params):
+#   - TS_USERSPACE=true (the image default, stated for clarity): userspace networking — no
+#     /dev/net/tun, no NET_ADMIN, runs unprivileged. Plenty for serve->localhost proxying.
+#   - TS_KUBE_SECRET: node state persists in the sentient-docs-tailscale-state Secret, so the
+#     machine identity survives restarts; with TS_AUTH_ONCE=true the auth key is only consumed
+#     when no state exists (first boot).
+#   - TS_AUTHKEY comes from the manually-created sentient-docs-tailscale-auth Secret (see
+#     README.md §2; optional:true so the pod still starts after the key secret is deleted
+#     post-enrollment).
+#   - Health: containerboot's /healthz on :9002 (TS_ENABLE_HEALTH_CHECK) gates readiness — ready
+#     means "has a tailnet IP".
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentient-docs
+  namespace: docs
+  labels:
+    app: sentient-docs
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: sentient-docs
+  template:
+    metadata:
+      labels:
+        app: sentient-docs
+    spec:
+      serviceAccountName: sentient-docs
+      containers:
+        - name: nginx
+          # :latest + Always is deliberate — docs.yml pushes :latest and :<sha> on every merge to
+          # main, then rollout-restarts this deployment; Recreate + Always makes the restart pull
+          # the fresh image. The :<sha> tags exist for pinning/rollback by hand.
+          image: rust-mirror:443/sentient/sentient-docs:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+        - name: tailscale
+          # Digest-pinned (resolved 2026-07-17 via registry API; stable == latest that day).
+          image: tailscale/tailscale:stable@sha256:f15d5d3f4a68773a853180b72496f70ba614b64de0878c43fe3da39fe0afba47
+          env:
+            - name: TS_HOSTNAME
+              value: sentient-docs
+            - name: TS_KUBE_SECRET
+              value: sentient-docs-tailscale-state
+            - name: TS_AUTH_ONCE
+              value: "true"
+            - name: TS_USERSPACE
+              value: "true"
+            - name: TS_SERVE_CONFIG
+              value: /etc/tailscale/serve.json
+            - name: TS_ENABLE_HEALTH_CHECK
+              value: "true"
+            - name: TS_LOCAL_ADDR_PORT
+              value: "[::]:9002"
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: sentient-docs-tailscale-auth
+                  key: TS_AUTHKEY
+                  optional: true
+          volumeMounts:
+            - name: serve-config
+              mountPath: /etc/tailscale
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: serve-config
+          configMap:
+            name: sentient-docs-serve-config

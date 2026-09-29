@@ -1,0 +1,73 @@
+# systemd unit for the Sentient METEOR comms-module binary.
+#
+# Install:
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin sentient
+#   sudo install -m0755 target/release/bin-rpi /usr/local/bin/bin-rpi
+#   sudo install -m0755 distro/deploy/verify-binary.sh    /usr/local/bin/verify-binary.sh
+#   sudo install -D -m0644 config/sentient.toml    /etc/sentient/sentient.toml
+#   # X.509 CMS pre-start gate (ExecStartPre below): the CA trust anchor + the binary's detached sig,
+#   # both attached to the GitHub release (ca.pem / bin-rpi-<slug>.p7s from the "Sign RPi binaries" job):
+#   sudo install -D -m0644 ca.pem              /etc/sentient/ca.crt
+#   sudo install -D -m0644 bin-rpi-<slug>.p7s  /usr/local/bin/bin-rpi.p7s
+#   sudo install -m0755 distro/deploy/bin-rpi.service /etc/systemd/system/bin-rpi.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now bin-rpi
+#
+# The binary signals READY=1 after startup and WATCHDOG=1 each healthy cycle (see impl-app);
+# a wedged or persistently unhealthy loop stops petting the watchdog and systemd restarts it.
+
+[Unit]
+Description=Sentient METEOR TMS telemetry adapter (Seplos BMS -> TMS -> MQTT)
+Documentation=file:/usr/local/share/doc/sentient/deployment.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+# Health watchdog: the loop feeds WATCHDOG=1 only while healthy (see Platform::on_cycle).
+# WatchdogSec must exceed one poll interval with margin (default poll = 1 s).
+WatchdogSec=30
+Restart=on-failure
+RestartSec=5
+
+# Integrity gate: refuse to start unless the binary matches its signature.
+ExecStartPre=/usr/local/bin/verify-binary.sh /usr/local/bin/bin-rpi
+ExecStart=/usr/local/bin/bin-rpi
+Environment=SENTIENT_CONFIG=/etc/sentient/sentient.toml
+Environment=RUST_LOG=info
+
+# --- Least privilege ---
+User=sentient
+Group=sentient
+# Serial device access without broad device exposure (adjust the group for your distro).
+SupplementaryGroups=dialout
+DevicePolicy=closed
+DeviceAllow=/dev/ttyAMA0 rw
+
+# --- Sandbox hardening ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=no
+UMask=0077
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
+
+# If the sd-notify integration is unavailable in a given build, fall back to a plain supervised
+# service: set `Type=simple` and delete the `WatchdogSec=` line (Restart=on-failure still applies).

@@ -1,0 +1,723 @@
+<title>CI Workflow Duplication Audit — sentient-rs</title>
+<style>
+:root {
+  --ink: #1b1e21;
+  --ink-soft: #4b5257;
+  --paper: #fbfaf7;
+  --paper-raised: #ffffff;
+  --line: #dcd8cf;
+  --line-soft: #ece9e1;
+  --accent: #1f6f5c;
+  --accent-soft: #e4efe9;
+  --amber: #a6631a;
+  --amber-soft: #f5ecdd;
+  --red: #a13a2f;
+  --red-soft: #f6e9e6;
+  --mono-bg: #21252b;
+  --mono-ink: #d8dde3;
+  --mono-accent: #7fd8b8;
+  --radius: 6px;
+}
+
+@font-face {
+  font-family: 'Iosevka Local';
+  src: local('Iosevka'), local('JetBrains Mono'), local('Menlo');
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+  padding: 0 0 6rem 0;
+}
+
+.wrap {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 3.5rem 2rem 0 2rem;
+}
+
+/* ---------- Masthead ---------- */
+
+.masthead {
+  border-bottom: 3px solid var(--ink);
+  padding-bottom: 1.75rem;
+  margin-bottom: 2.5rem;
+}
+
+.eyebrow {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 0.6rem;
+}
+
+h1 {
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: 2.4rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem 0;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+  color: var(--ink);
+}
+
+.dek {
+  font-size: 1.08rem;
+  color: var(--ink-soft);
+  max-width: 62ch;
+  margin: 0.5rem 0 0 0;
+}
+
+.meta-row {
+  display: flex;
+  gap: 1.75rem;
+  flex-wrap: wrap;
+  margin-top: 1.25rem;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+.meta-row strong { color: var(--ink); font-weight: 600; }
+
+/* ---------- Section headings ---------- */
+
+h2 {
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 3rem 0 1rem 0;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line);
+  text-wrap: balance;
+}
+
+h3 {
+  font-family: Georgia, serif;
+  font-size: 1.18rem;
+  font-weight: 700;
+  margin: 0 0 0.35rem 0;
+  color: var(--ink);
+}
+
+h2 .section-num {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.95rem;
+  color: var(--accent);
+  font-weight: 600;
+  margin-right: 0.6rem;
+}
+
+p { margin: 0.7rem 0; max-width: 74ch; }
+
+/* ---------- Ranked table ---------- */
+
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 760px;
+  font-size: 0.92rem;
+}
+
+thead th {
+  text-align: left;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  background: var(--line-soft);
+  padding: 0.65rem 0.85rem;
+  border-bottom: 2px solid var(--line);
+  white-space: nowrap;
+}
+
+tbody td {
+  padding: 0.7rem 0.85rem;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
+}
+
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: #f7f5ef; }
+
+td.rank {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-weight: 700;
+  font-size: 1rem;
+  text-align: center;
+  color: var(--ink-soft);
+}
+
+td.pattern strong { display: block; color: var(--ink); font-size: 0.97rem; }
+td.pattern span { color: var(--ink-soft); font-size: 0.85rem; }
+
+.pill {
+  display: inline-block;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pill-high { background: var(--red-soft); color: var(--red); }
+.pill-med  { background: var(--amber-soft); color: var(--amber); }
+.pill-low  { background: var(--line-soft); color: var(--ink-soft); }
+
+td.occ { font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+
+/* ---------- High-priority cards ---------- */
+
+.card {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 1.4rem 1.6rem;
+  margin: 1.25rem 0;
+}
+
+.card.amber { border-left-color: var(--amber); }
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+.card-tag {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.card dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0.9rem 0 0 0;
+  font-size: 0.93rem;
+}
+
+.card dt {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  padding-top: 0.15rem;
+  white-space: nowrap;
+}
+
+.card dd { margin: 0; color: var(--ink); }
+
+code, .mono {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.87em;
+  background: var(--line-soft);
+  padding: 0.08em 0.35em;
+  border-radius: 4px;
+  color: var(--ink);
+}
+
+pre {
+  background: var(--mono-bg);
+  color: var(--mono-ink);
+  padding: 0.9rem 1.1rem;
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0.6rem 0;
+}
+pre .c { color: #7f8a96; }
+pre .k { color: var(--mono-accent); }
+
+ul, ol { padding-left: 1.3rem; max-width: 74ch; }
+li { margin: 0.3rem 0; }
+
+.filelist {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+/* ---------- Sequencing ---------- */
+
+.seq {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  counter-reset: seq;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--paper-raised);
+}
+
+.seq-step {
+  display: grid;
+  grid-template-columns: 3rem 1fr;
+  border-bottom: 1px solid var(--line-soft);
+}
+.seq-step:last-child { border-bottom: none; }
+
+.seq-num {
+  counter-increment: seq;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-weight: 700;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--line);
+}
+.seq-num::before { content: counter(seq); }
+
+.seq-body { padding: 0.85rem 1.1rem; }
+.seq-body strong { display: block; margin-bottom: 0.15rem; }
+.seq-body span { color: var(--ink-soft); font-size: 0.9rem; }
+
+/* ---------- Misc ---------- */
+
+.note {
+  background: var(--accent-soft);
+  border: 1px solid #c6ddd3;
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+  font-size: 0.92rem;
+  color: #1a4a3d;
+  margin: 1rem 0;
+}
+
+hr.rule {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 3rem 0 1.5rem 0;
+}
+
+footer {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 2rem;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 640px) {
+  h1 { font-size: 1.8rem; }
+  .wrap { padding: 2rem 1.1rem 0 1.1rem; }
+  .card dl { grid-template-columns: 1fr; }
+  .card dt { padding-top: 0.6rem; }
+}
+</style>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="eyebrow">CI Engineering &middot; Read-only Audit</div>
+    <h1>Reusable-Form Audit: sentient-rs GitHub Actions</h1>
+    <p class="dek">Fourteen workflow files, one composite action, 3,215 lines of YAML. Six recurring
+    patterns are copy-pasted across the Yocto/release lanes with real behavioral drift between copies —
+    the kind of duplication that costs a debugging session the day one copy gets fixed and its sibling
+    doesn't.</p>
+    <div class="meta-row">
+      <span><strong>Scope</strong> .github/workflows/*.yml + .github/actions/**</span>
+      <span><strong>Branch</strong> ci/builder-image-matrix</span>
+      <span><strong>Mode</strong> analysis only — no files modified</span>
+    </div>
+  </div>
+
+  <h2><span class="section-num">00</span>Ranked extraction opportunities</h2>
+  <p>Ordered by duplication &times; drift-risk &times; churn. High-priority items get a full writeup below the table.</p>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Pattern</th>
+          <th>Occurrences</th>
+          <th>Recommended form</th>
+          <th>Priority</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="rank">1</td>
+          <td class="pattern"><strong>MinIO write-through mirror</strong><span>start watcher + always() stop/sweep</span></td>
+          <td class="occ">3 call sites, 2 files, ~90 lines dup'd</td>
+          <td>Composite action</td>
+          <td><span class="pill pill-high">High</span></td>
+        </tr>
+        <tr>
+          <td class="rank">2</td>
+          <td class="pattern"><strong>openssl X.509 CMS sign+verify</strong><span>sign &rarr; CA-verify &rarr; -noverify degrade &rarr; hard fail</span></td>
+          <td class="occ">5 call sites, 2 files</td>
+          <td>Composite action</td>
+          <td><span class="pill pill-high">High</span></td>
+        </tr>
+        <tr>
+          <td class="rank">3</td>
+          <td class="pattern"><strong>cgroup-aware BitBake parallelism</strong><span>cpu.max/memory.max &rarr; BB_NUMBER_THREADS fragment</span></td>
+          <td class="occ">2 call sites, drifted (memory-cap logic only in one)</td>
+          <td>Shared script (.ci/scripts/)</td>
+          <td><span class="pill pill-high">High</span></td>
+        </tr>
+        <tr>
+          <td class="rank">4</td>
+          <td class="pattern"><strong>kas build harness</strong><span>mkdir + chown + runuser -u builder</span></td>
+          <td class="occ">4 call sites, 3 files</td>
+          <td>Composite action</td>
+          <td><span class="pill pill-med">Med</span></td>
+        </tr>
+        <tr>
+          <td class="rank">5</td>
+          <td class="pattern"><strong>checkout + Setup composite</strong><span>actions/checkout then ./.github/actions/setup</span></td>
+          <td class="occ">~16 jobs across 8 files, near-identical</td>
+          <td>Fold into setup, or leave (cheap already)</td>
+          <td><span class="pill pill-med">Med</span></td>
+        </tr>
+        <tr>
+          <td class="rank">6</td>
+          <td class="pattern"><strong>MinIO golden pull (mc stat/cp base image)</strong></td>
+          <td class="occ">2 call sites (uat.yml, production.yml), already drifted</td>
+          <td>Shared script</td>
+          <td><span class="pill pill-med">Med</span></td>
+        </tr>
+        <tr>
+          <td class="rank">7</td>
+          <td class="pattern"><strong>Digest-pinned builder-image container refs</strong></td>
+          <td class="occ">~14 refs across 8 files, machine-managed</td>
+          <td>Already scripted (update-build-sha.sh) — document, don't extract</td>
+          <td><span class="pill pill-low">Low</span></td>
+        </tr>
+        <tr>
+          <td class="rank">8</td>
+          <td class="pattern"><strong>Pre-release tag computation</strong><span>date.run_id, recomputed per matrix leg</span></td>
+          <td class="occ">2 call sites in _yocto.yml (same file!)</td>
+          <td>Job output passthrough, not extraction</td>
+          <td><span class="pill pill-low">Low</span></td>
+        </tr>
+        <tr>
+          <td class="rank">9</td>
+          <td class="pattern"><strong>Robot/JUnit &rarr; step-summary conversion</strong></td>
+          <td class="occ">3 call sites, already using shared .ci/scripts/*.py</td>
+          <td>Already extracted — no action</td>
+          <td><span class="pill pill-low">Low</span></td>
+        </tr>
+        <tr>
+          <td class="rank">10</td>
+          <td class="pattern"><strong>docker/setup-buildx-action Harbor trust block</strong></td>
+          <td class="occ">2 call sites, same file (builder-image.yml)</td>
+          <td>Composite action (low urgency, 1 file)</td>
+          <td><span class="pill pill-low">Low</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <hr class="rule">
+
+  <h2><span class="section-num">01</span>High-priority writeups</h2>
+
+  <div class="card">
+    <div class="card-head">
+      <h3>MinIO write-through mirror (start / stop-sweep)</h3>
+      <span class="card-tag">COMPOSITE ACTION</span>
+    </div>
+    <p>The most duplicated non-trivial block in the repo. Two steps travel together every time: a
+    <code>Start MinIO mirror write-through</code> step that backgrounds <code>mc mirror --watch</code>
+    per prefix (writing PIDs to <code>/tmp/mc-watch.pids</code>, disowning so it survives the step), and
+    a paired <code>if: always()</code> stop-and-final-sweep step that kills those PIDs, tails the watcher
+    logs, and does one more <code>mc mirror --overwrite --quiet</code> pass.</p>
+    <dl>
+      <dt>Occurrences</dt>
+      <dd>
+        <span class="filelist">_yocto.yml:119&ndash;162</span> (start) / <span class="filelist">_yocto.yml:235&ndash;270</span> (stop)<br>
+        <span class="filelist">production.yml:501&ndash;526</span> (start) / <span class="filelist">production.yml:627&ndash;656</span> (stop)
+      </dd>
+      <dt>Drift</dt>
+      <dd><strong>Real and dangerous.</strong> _yocto.yml's start step carries extra diagnostics
+      production.yml's copy lacks: a captured <code>mc alias set</code> error message (<code>err="$(...)"</code>
+      showing key_set/secret_set booleans), an explicit <code>mc ls --recursive --summarize</code> read-side
+      probe, and an explicit <code>mc anonymous get</code> policy check. These diagnostics were added to
+      _yocto.yml specifically to debug the "Mirrors=294, cold" gotcha noted in project memory
+      (<code>yocto-image-green-mirror</code>) — production.yml's copy will hit the same failure mode
+      blind, with only a generic <code>mc alias set failed</code> warning to go on.</dd>
+      <dt>Inputs</dt>
+      <dd><code>minio-access-key</code>, <code>minio-secret-key</code> (secrets, passed explicitly — composite actions
+      cannot read <code>secrets.*</code> implicitly), <code>cache-root</code> (default <code>/opt/yocto-cache</code>),
+      <code>prefixes</code> (default <code>sstate downloads</code>)</dd>
+      <dt>Outputs</dt>
+      <dd>none required; could emit <code>pids-file</code> path for symmetry with a separate stop action, or
+      fold start+stop into one action with a <code>mode: start|stop</code> input</dd>
+      <dt>Gotchas</dt>
+      <dd>The background <code>mc mirror --watch</code> process must survive the step boundary
+      (<code>nohup</code> + <code>disown</code>) — a composite action's steps run in the same shell process
+      tree as the calling job, so this should still work, but verify disowned children survive a composite
+      action step boundary specifically (not just a plain workflow step) before relying on it. The stop
+      step must run <code>if: always()</code> at the call site — a composite action step cannot force its
+      own <code>if:</code> condition on the caller, so the workflow author must still remember to gate the
+      stop invocation with <code>if: always()</code>.</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h3>openssl X.509 CMS sign + verify</h3>
+      <span class="card-tag">COMPOSITE ACTION</span>
+    </div>
+    <p>Five near-identical sign blocks, each: write <code>SIGNING_KEY</code>/<code>SIGNING_CRT</code>/<code>CA_CRT</code>
+    to <code>mktemp</code> files with a <code>shred -u</code> trap, <code>openssl cms -sign</code>, then a
+    three-way verify degrade — CA-chained verify passes clean, a self-signed cert falls back to
+    <code>-noverify</code> with a warning, an actually-broken signature hard-fails.</p>
+    <dl>
+      <dt>Occurrences</dt>
+      <dd>
+        <span class="filelist">_yocto.yml:356&ndash;386</span> (golden bundle) &middot;
+        <span class="filelist">_yocto.yml:480&ndash;514</span> (shipping .wic) &middot;
+        <span class="filelist">production.yml:80&ndash;123</span> (validate-signing preflight, throwaway blob) &middot;
+        <span class="filelist">production.yml:692&ndash;727</span> (app sysext .raw) &middot;
+        <span class="filelist">production.yml:841&ndash;882</span> (RPi binaries, loop over multiple files)
+      </dd>
+      <dt>Drift</dt>
+      <dd>Low on the core sign/verify logic (all five copies use the identical three-way degrade), but the
+      surrounding shape differs: the RPi-binaries copy loops over a glob with a <code>case</code> exclusion
+      list, the app-sysext and .wic copies loop over a smaller glob, and the validate-signing copy signs a
+      <code>/dev/urandom</code> throwaway and exposes a <code>tier</code> output instead of writing a
+      <code>.p7s</code> file. A composite action needs a <code>mode</code> or a glob-pattern input to cover
+      all five without re-forking the copy-paste.</dd>
+      <dt>Inputs</dt>
+      <dd><code>signing-key</code>, <code>signing-crt</code>, <code>ca-crt</code> (secrets, explicit) &middot;
+      <code>target-glob</code> (files to sign, e.g. <code>dist/bin-rpi-*</code>) &middot;
+      <code>exclude-suffixes</code> (optional, for the RPi-binaries case) &middot; <code>throwaway</code>
+      (bool, for the validate-signing preflight variant)</dd>
+      <dt>Outputs</dt>
+      <dd><code>tier</code> (<code>release</code> / <code>prerelease</code> / unset-on-skip) &middot;
+      <code>signed</code> (bool) — every call site currently re-derives its own notion of "did signing
+      happen" from the same <code>[ -z ... ] && exit 0</code> guard; a shared output normalizes this</dd>
+      <dt>Blast radius / risk</dt>
+      <dd>5 call sites across 2 files, all release-critical (a broken extraction breaks shipping). Secrets
+      must be passed as explicit composite-action inputs — <code>secrets.SIGNING_KEY</code> is not visible
+      inside a composite action body. Every copy already writes key material through <code>mktemp</code> with
+      a <code>trap ... EXIT</code> shred — preserve that exactly; a composite action step's <code>trap</code>
+      scope needs verifying (does it span only that step, or the whole composite invocation?).</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h3>cgroup-aware BitBake parallelism</h3>
+      <span class="card-tag">SHARED SCRIPT — .ci/scripts/bitbake-parallelism.sh</span>
+    </div>
+    <p>Reads <code>/sys/fs/cgroup/cpu.max</code> (falls back to <code>nproc</code>) to get the real CPU
+    quota GitHub's cgroup-blind <code>sched_getaffinity</code> can't see, then generates a kas
+    <code>local_conf_header</code> YAML fragment pinning <code>BB_NUMBER_THREADS</code>/<code>PARALLEL_MAKE</code>.</p>
+    <dl>
+      <dt>Occurrences</dt>
+      <dd><span class="filelist">_yocto.yml:174&ndash;204</span> (build-image job) &middot;
+      <span class="filelist">production.yml:601&ndash;612</span> (sysext job)</dd>
+      <dt>Drift</dt>
+      <dd><strong>The two copies are functionally different, not just textually.</strong> _yocto.yml also
+      reads <code>/sys/fs/cgroup/memory.max</code> and caps the thread count by RAM
+      (<code>JMEM = MEMGB / 4</code>, then <code>J = min(N, JMEM)</code>) — added specifically because a
+      CPU-only cap was still OOM-killing cold builds at ~95 minutes (see the inline comment referencing
+      "MEMORY-CAPPED parallelism (reverts the earlier MAX PROCS directive)"). production.yml's sysext job
+      still uses the <em>old</em> CPU-only formula that _yocto.yml explicitly moved away from. This is a
+      real, live bug risk: the sysext job builds on the same ARC pool with the same OOM history, and
+      nothing informed it of the fix.</dd>
+      <dt>Recommended form</dt>
+      <dd>A checked-in script, not a composite action — this is pure computation with no secrets and no
+      side effects beyond writing a file, matching the existing convention (<code>junit_to_summary.py</code>,
+      <code>robot_output_to_summary.py</code>). Script writes the kas fragment path to stdout or
+      <code>$GITHUB_OUTPUT</code>; callers do <code>PARCONF="$(.ci/scripts/bitbake-parallelism.sh)"</code>.</dd>
+      <dt>Priority driver</dt>
+      <dd>High not because of line count (it's short) but because the drift is an active regression in
+      production.yml's sysext job — extracting this fixes a latent OOM risk as a side effect, not just a
+      style cleanup.</dd>
+    </dl>
+  </div>
+
+  <hr class="rule">
+
+  <h2><span class="section-num">02</span>Medium / low priority — brief notes</h2>
+
+  <h3>kas build harness (mkdir + chown + runuser -u builder)</h3>
+  <p>The <code>mkdir -p "$KAS_WORK_DIR"</code> / <code>chown -R builder:builder ...</code> /
+  <code>runuser -u builder -- env HOME=/home/builder KAS_MACHINE=... kas {shell,build} ...</code> shape
+  repeats at <span class="filelist">_yocto.yml:206&ndash;214</span>, <span class="filelist">production.yml:613&ndash;621</span>,
+  <span class="filelist">uat.yml:133&ndash;138</span>, and <span class="filelist">uat.yml:290&ndash;296</span>.
+  Drift is mostly cosmetic (which env vars get forwarded, <code>kas build</code> vs <code>kas shell -c</code>),
+  but the root-container-then-drop-to-builder dance is a real gotcha worth centralizing in one place with
+  a comment, rather than four. A composite action works if it accepts the kas subcommand
+  (<code>build</code> / <code>shell -c "..."</code>) as a parameter; otherwise a documented shell function
+  in a sourced script is lower-risk given <code>runuser</code>'s privilege-drop semantics are easy to get
+  subtly wrong in a generic wrapper.</p>
+
+  <h3>checkout + Setup composite pairing</h3>
+  <p>Every job that touches Rust starts with <code>actions/checkout@...</code> (almost always
+  <code>submodules: recursive</code>) immediately followed by <code>uses: ./.github/actions/setup</code>
+  with the same three inputs. ~16 call sites. This is already about as DRY as GitHub Actions allows
+  short of a reusable-workflow-per-job (which would fight the current "reusable workflow per <em>concern</em>,
+  composite action per <em>tool setup</em>" shape that's working well). Not worth a new abstraction; if
+  anything, consider adding <code>submodules: recursive</code> as a fixed default baked into the checkout
+  usage via a thin wrapper composite (<code>.github/actions/checkout-setup</code> = checkout + setup in
+  one), saving one step per job — cosmetic, low value.</p>
+
+  <h3>MinIO golden-image pull (mc stat / mc cp against golden store)</h3>
+  <p>uat.yml (<span class="filelist">uat.yml:163&ndash;181</span>, pulling the qemuarm64 tarball) and
+  production.yml's sysext job (<span class="filelist">production.yml:537&ndash;566</span>, pulling the
+  shipping <code>.wic</code>) both do: <code>mc alias set</code> &rarr; <code>mc stat</code> a fixed golden
+  key &rarr; <code>mc cp</code> the object + its <code>.p7s</code> sidecar &rarr; error loudly if missing.
+  Already drifted: uat.yml assumes a single fixed extension (<code>.tar.gz</code>), production.yml's copy
+  loops over <code>wic.bz2</code> then <code>wic</code> tolerantly. A shared script
+  (<code>.ci/scripts/mc-pull-golden.sh &lt;machine&gt; &lt;ext-list&gt; &lt;dest-dir&gt;</code>) unifies
+  both without forcing a composite-action secrets dance for what's a two-line curl-equivalent.</p>
+
+  <h3>Digest-pinned builder-image container refs</h3>
+  <p>~14 <code>container: 10.0.0.246/sentient/sentient-*-builder@sha256:...</code> lines across 8 workflow
+  files. This duplication is real but <strong>already has a purpose-built fix</strong>:
+  <code>.ci/update-build-sha.sh</code> mechanically rewrites every one of these refs (its own
+  <code>BASE_WORKFLOWS</code> / <code>WORKFLOWS</code> arrays list exactly the files to touch) and has a
+  <code>--check</code> mode for a drift gate. The actual gap isn't the duplication — it's that nothing in
+  <code>_supply-chain.yml</code>'s zizmor/audit job currently runs <code>update-build-sha.sh --check</code>
+  as a CI gate, so a stale digest can land and merge silently. <strong>Recommendation: wire the existing
+  script into a check, don't build a new abstraction.</strong> A YAML anchor or reusable
+  <code>env:</code> block can't cross separate workflow files in GitHub Actions, so there's no native way
+  to fully eliminate the repetition short of this kind of generation script, which already exists.</p>
+
+  <h3>Pre-release tag computation (date.run_id)</h3>
+  <p>Computed once in _yocto.yml's qemuarm64 leg (<span class="filelist">_yocto.yml:330&ndash;348</span>,
+  <code>steps.prerel.outputs.tag</code>) and <em>recomputed</em> in the same file's shipping-machine leg
+  (<span class="filelist">_yocto.yml:576&ndash;582</span>, <code>steps.prerel_tag.outputs.tag</code>) because
+  matrix legs are separate jobs that can't share step outputs. The inline comment already acknowledges the
+  UTC-midnight double-tag edge case and accepts it. This is a matrix-parallelism constraint, not a
+  copy-paste smell — extracting it to a script wouldn't remove the duplication (each leg would still need
+  to invoke the script independently); the real fix would be promoting the tag computation to a
+  workflow-level <code>outputs:</code> on a tiny prerequisite job the matrix <code>needs:</code>, which is
+  a job-graph change, not a reusable-form extraction. Low priority, flagged for completeness.</p>
+
+  <h3>docker/setup-buildx-action Harbor-trust block</h3>
+  <p>builder-image.yml's <code>base</code> and <code>derived</code> jobs (<span class="filelist">builder-image.yml:54&ndash;71</span>
+  and <span class="filelist">builder-image.yml:128&ndash;137</span>) repeat the identical
+  <code>buildkitd-flags: --allow-insecure-entitlement network.host</code> +
+  <code>driver-opts: env.SSL_CERT_DIR=...</code> + <code>buildkitd-config-inline: [registry."10.0.0.246"] ca = [...]</code>
+  block, plus an identical "Write Harbor robot creds to docker config" step. Confined to one file, two
+  jobs — a composite action would help if a third builder-image job is added later, but two occurrences in
+  one file is thin justification today.</p>
+
+  <hr class="rule">
+
+  <h2><span class="section-num">03</span>Other duplication worth flagging</h2>
+  <ul>
+    <li><strong>Env-var-not-interpolation pattern.</strong> Every <code>run:</code> block that touches a
+    <code>${{ github.* }}</code> or <code>${{ inputs.* }}</code> value correctly routes it through
+    <code>env:</code> first (zizmor template-injection avoidance) — this is consistently applied, not a
+    smell, but worth calling out as a convention worth codifying in a repo-level zizmor rule comment or a
+    CONTRIBUTING note so new workflow authors don't reintroduce direct interpolation.</li>
+    <li><strong><code>if-no-files-found: error</code> convention.</strong> Consistently applied on
+    artifact uploads that must not silently no-op (test-e2e junit, Renode results). Good, no action
+    needed — noting it as a pattern worth preserving when extracting the upload step elsewhere.</li>
+    <li><strong>Concurrency-group naming.</strong> Every workflow sets <code>concurrency: group: &lt;name&gt;-${{ github.ref }}</code>
+    with a workflow-specific cancel policy (ci.yml cancels, uat.yml/image.yml/production.yml don't). Not
+    duplicated logic, just a repeated shape — fine as-is, each choice is deliberate per the inline
+    comments.</li>
+    <li><strong>permissions: blocks.</strong> Each reusable workflow declares its own minimal
+    <code>permissions: contents: read</code> (occasionally <code>write</code> for release jobs). Correctly
+    scoped per job already, not a duplication problem.</li>
+  </ul>
+
+  <hr class="rule">
+
+  <h2><span class="section-num">04</span>Suggested sequencing</h2>
+  <p>Ordered for maximum smell reduction per unit of risk — cheapest, highest-confidence wins first;
+  the two release-critical composite actions (signing, MinIO mirror) come after the scripted fix that
+  needs no new abstraction at all.</p>
+
+  <div class="seq">
+    <div class="seq-step">
+      <div class="seq-num"></div>
+      <div class="seq-body">
+        <strong>Wire <code>update-build-sha.sh --check</code> into <code>_supply-chain.yml</code></strong>
+        <span>Zero new code — the drift-detection script already exists. Closes the digest-pin gap
+        immediately and is a template for how "already-scripted" duplication should be gated going forward.</span>
+      </div>
+    </div>
+    <div class="seq-step">
+      <div class="seq-num"></div>
+      <div class="seq-body">
+        <strong>Extract cgroup-aware BitBake parallelism to <code>.ci/scripts/bitbake-parallelism.sh</code></strong>
+        <span>Fixes the live OOM-risk drift in production.yml's sysext job as a side effect of the
+        extraction — this is a bug fix wearing a refactor's clothes. Pure computation, no secrets, lowest
+        risk of the composite-action candidates.</span>
+      </div>
+    </div>
+    <div class="seq-step">
+      <div class="seq-num"></div>
+      <div class="seq-body">
+        <strong>Build the <code>.github/actions/cms-sign</code> composite action</strong>
+        <span>Five call sites, release-critical. Do this before touching the MinIO mirror action so the
+        two land independently and each gets its own focused review — signing correctness is the higher-
+        stakes of the two.</span>
+      </div>
+    </div>
+    <div class="seq-step">
+      <div class="seq-num"></div>
+      <div class="seq-body">
+        <strong>Build the <code>.github/actions/minio-mirror</code> composite action</strong>
+        <span>Port _yocto.yml's more complete diagnostics (the captured alias-set error, the read-side
+        probe) into the shared action so production.yml's sysext job inherits them — this extraction is
+        also a bug-parity fix, not just deduplication.</span>
+      </div>
+    </div>
+    <div class="seq-step">
+      <div class="seq-num"></div>
+      <div class="seq-body">
+        <strong>Shared script for MinIO golden-image pull, then the kas-build-harness composite</strong>
+        <span>Lower urgency; do these once the release-critical extractions have proven the composite-
+        action pattern works cleanly against this repo's ARC/runuser environment.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    Every composite-action candidate above needs secrets passed as explicit <code>inputs:</code> — composite
+    actions cannot read <code>secrets.*</code> the way reusable workflows can with <code>secrets: inherit</code>.
+    Each call site will need a small mechanical change (<code>minio-access-key: ${{ secrets.CACHE_AWS_KEY }}</code>
+    etc.) alongside the extraction itself; this is not optional plumbing, it's how GitHub Actions scopes
+    secret access to composite actions.
+  </div>
+
+</div>
+
+<footer>
+  sentient-rs &middot; .github/workflows audit &middot; read-only, no files modified
+</footer>

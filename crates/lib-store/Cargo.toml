@@ -1,0 +1,16 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "lib-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Bounded in-memory telemetry store: a fixed-capacity, overwrite-oldest ring buffer of CanonicalReadings (+ latest fault + pending-topic tracking) implementing the 'store canonical, render on output' memory model. Pure no_std/no-alloc data (heapless), zero I/O, zero static/locking — a reusable memory-efficiency component the caller wires into static storage (MCU) or owns directly (host). Depends only on lib-canonical for the stored types."
+
+[dependencies]
+heapless = { workspace = true }
+lib-canonical = { workspace = true }
+
+[lints]
+workspace = true

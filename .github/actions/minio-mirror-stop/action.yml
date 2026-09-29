@@ -1,0 +1,70 @@
+name: Stop MinIO mirror write-through + final sweep
+description: >-
+  Pair to minio-mirror-start: STOP the continuous `mc mirror --watch` write-through watchers
+  (reading their PIDs from /tmp/mc-watch.pids, written by the start action) and do a FINAL
+  reconciling sweep of the local sstate/downloads caches into MinIO. Callers must set `if: always()`
+  on the step invoking this action so it runs on success, failure, or cancel — the watchers already
+  streamed most objects during the build; this catches anything written after their last inotify
+  event and is the backstop if `mc --watch` wasn't available. `mc mirror` is incremental and never
+  deletes remote objects, so the mirror ACCUMULATES across runs. Composite actions cannot read
+  `secrets.*` implicitly, so the MinIO credentials are taken as explicit inputs.
+
+inputs:
+  mc-endpoint:
+    description: MinIO S3 endpoint (e.g. http://minio-cache-direct.minio-tenant.svc:9000).
+    required: true
+  mc-key:
+    description: MinIO access key (secrets.CACHE_AWS_KEY).
+    required: true
+  mc-secret:
+    description: MinIO secret key (secrets.CACHE_AWS_SECRET).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Stop write-through + final mirror sweep
+      shell: bash
+      env:
+        # `mc alias set` takes creds as args (not a URL), so a secret containing @ / : / does not
+        # break parsing the way an inline MC_HOST_* URL would. Isolated CI pod — brief ps exposure ok.
+        MC_ENDPOINT: ${{ inputs.mc-endpoint }}
+        MC_KEY: ${{ inputs.mc-key }}
+        MC_SECRET: ${{ inputs.mc-secret }}
+      run: |
+        set -uo pipefail
+        # Stop the continuous watchers (let their in-flight uploads settle first).
+        if [ -s /tmp/mc-watch.pids ]; then
+          while read -r pid; do [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null || true; done < /tmp/mc-watch.pids
+          sleep 2
+        fi
+        # Watcher activity (tail of each --watch log: upload lines or errors) — proves whether the
+        # continuous write-through actually pushed objects during the build.
+        echo "::group::watcher logs (write-through activity)"
+        for p in sstate downloads; do
+          echo "--- cache/$p watcher ---"; tail -n 8 "/tmp/mc-watch-$p.log" 2>/dev/null || echo "  (no log)"
+        done
+        echo "::endgroup::"
+        command -v mc >/dev/null 2>&1 || { echo "::warning::mc not in image — skipping final sweep"; exit 0; }
+        mc alias set minio "$MC_ENDPOINT" "$MC_KEY" "$MC_SECRET" >/dev/null 2>&1 \
+          || { echo "::warning::mc alias set failed — skipping final sweep"; exit 0; }
+        for d in sstate-cache:sstate downloads:downloads; do
+          src="/opt/yocto-cache/${d%%:*}"; dst="minio/cache/${d##*:}"
+          [ -d "$src" ] || { echo "::notice::$src absent — nothing to mirror"; continue; }
+          # PROGRESS-ONLY REPORTING: `mc mirror` prints one `src -> dst` line per object even under
+          # `--quiet` (it only suppresses the progress bar), which floods the log with 1000s of sstate
+          # paths. Capture that per-object stream to a file and report only STATUS: an object count on
+          # success, the tail on failure. The mirror total is still printed below via `mc ls`.
+          swlog="/tmp/mc-sweep-${d##*:}.log"
+          if mc mirror --overwrite --quiet "$src/" "$dst/" >"$swlog" 2>&1; then
+            n="$(grep -c ' -> ' "$swlog" 2>/dev/null || true)"; n="${n:-0}"
+            echo "::notice::final sweep $dst — ${n} object(s) reconciled"
+          else
+            echo "::warning::final sweep $dst had errors (non-fatal); last 20 lines:"
+            tail -n 20 "$swlog" 2>/dev/null || true
+          fi
+          mc anonymous set download "$dst" >/dev/null 2>&1 || echo "::warning::mc anonymous set $dst failed (set it once manually)"
+        done
+        # FINAL object count actually in the mirror now — the number the NEXT run reads back.
+        echo "::notice::mirror contents after this run:"
+        mc ls --recursive --summarize minio/cache/sstate/ 2>&1 | tail -1 || true

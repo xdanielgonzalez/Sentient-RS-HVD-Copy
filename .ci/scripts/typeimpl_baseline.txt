@@ -1,0 +1,2 @@
+# type/impl smell-test baseline — files with known violations to work down.
+# Regenerate: python3 .ci/scripts/typeimpl_audit.py --write-baseline

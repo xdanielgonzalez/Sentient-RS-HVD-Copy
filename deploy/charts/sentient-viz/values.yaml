@@ -1,0 +1,161 @@
+# sentient-viz — MQTT visualization + simulation stack.
+#
+# ALL credentials below are LOCAL-DEMO defaults, committed on purpose so
+# `helm install` works out of the box on a laptop cluster. Override every one of
+# them (--set / -f) before installing anywhere shared.
+
+nameOverride: ""
+fullnameOverride: ""
+
+images:
+  # app + sim are built locally: `just viz-images` (deploy/docker/Dockerfile).
+  app:
+    repository: sentient-viz-app
+    tag: local
+    pullPolicy: IfNotPresent
+  sim:
+    repository: sentient-viz-sim
+    tag: local
+    pullPolicy: IfNotPresent
+  influxdb:
+    repository: influxdb
+    tag: "2.7"
+    pullPolicy: IfNotPresent
+  telegraf:
+    repository: telegraf
+    # >= 1.35: mqtt_consumer startup_error_behavior=retry (1.31 exits on startup connect failure)
+    tag: "1.35"
+    pullPolicy: IfNotPresent
+  mosquitto:
+    repository: eclipse-mosquitto
+    tag: "2.0"
+    pullPolicy: IfNotPresent
+  grafana:
+    repository: grafana/grafana
+    tag: "11.1.4"
+    pullPolicy: IfNotPresent
+
+sim:
+  port: 5001
+  # RS-485 wire-rate pacing in baud; 0 = instant replies (no pacing).
+  pace: 19200
+  # Optional --turnaround-ms; empty = sim default.
+  turnaroundMs: ""
+  # Time-modulated telemetry drift (issue #226): oscillates current/cell mV/temperature/SOC
+  # around the steady-state values below so Grafana shows living telemetry instead of flat
+  # lines. Empty string = static state (the pre-drift behavior; also the sim binary's own
+  # default when --drift is omitted entirely) — set to "on" or a key=value spec (period/
+  # current/cells/temp/noise/seed, e.g. "period=60 current=800") to enable.
+  drift: "period=180 current=400 cells=6 temp=20 noise=3"
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+app:
+  deviceId: METEOR-001
+  poll:
+    dipAddresses: [0]
+    # MIL-STD-3071 mandates DcMeasurementUpdate at 1 Hz nominal (see
+    # PollConfig::validate); this must stay <= 1000.
+    intervalMs: 1000
+    # Poll fault flags every N cycles (0 = never). Faults injected into the sim
+    # surface on the next fault poll — at defaults, within ~10 s.
+    faultEvery: 10
+  brokerPort: 1883
+  ptyLink: /tmp/ttySIM
+  logLevel: info
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+influxdb:
+  org: sentient
+  bucket: telemetry
+  # Bucket retention (e.g. "30d"); empty = infinite retention (full history).
+  retention: ""
+  adminUser: admin
+  adminPassword: sentient-demo # DEMO ONLY
+  adminToken: sentient-demo-token # DEMO ONLY — read by Telegraf + Grafana via Secret
+  persistence:
+    # false = emptyDir (throwaway history) — used by the viz-uat CI lane so the
+    # shared cluster never accretes PVCs from test installs.
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
+telegraf:
+  flushIntervalSeconds: 5
+  # Device brokers feeding the tms/# -> mqtt_raw pipeline. Multiple may run at once — the typed
+  # measurements are keyed by device_id (from tms/{device_id}/...), so devices land side by side.
+  #
+  # inClusterBroker: render the in-cluster app+sim consumer (the synthetic METEOR-001 device).
+  inClusterBroker: true
+  # extraDeviceBrokers: ALSO consume from external brokers (real hardware). One mqtt_consumer per
+  # entry, each a distinct client_id so brokers don't kick each other. Example — add a Pi Zero
+  # running bin-rpi on the LAN alongside the in-cluster sim (both show in Grafana):
+  #   extraDeviceBrokers:
+  #     - { url: "tcp://10.0.0.178:1883", clientId: "telegraf-pi" }
+  # Each entry may set `keepalive` (default 60 in the template); the Feather needs 0 — see the
+  # keepalive discussion in templates/telegraf-configmap.yaml (its device-hosted broker drops
+  # PINGRESP under load via a stage-or-drop control path, so any ping>0 makes telegraf flap).
+  # The RP2350 Feather (real MCU hardware) hosts its own rumqttd broker on the bench VLAN; the
+  # viz cluster already routes to it (TCP 10.200.0.195:1883 reachable across the VLAN boundary).
+  extraDeviceBrokers:
+    - { url: "tcp://10.200.0.195:1883", clientId: "telegraf-feather", keepalive: 0 }
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+# The Green Grass Bridge — mosquitto pulling the Greengrass-bound telemetry/# namespace
+# off the device broker so Grafana can show "what would be sent to Greengrass" for parity
+# (see greengrass-bridge-configmap.yaml).
+greengrassBridge:
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 64Mi }
+
+grafana:
+  adminUser: admin
+  adminPassword: admin # DEMO ONLY
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+
+networkPolicy:
+  # When true: app:1883 accepts only Telegraf pods, sim:5001 accepts only app pods.
+  # Mitigates the plaintext/no-auth rumqttd broker listening on 0.0.0.0.
+  enabled: false
+
+tailscale:
+  # Opt-in tailnet exposure of Grafana: a `tailscale serve` sidecar on the grafana pod joins the
+  # tailnet as machine `hostname` and serves https://<hostname>.<tailnet>.ts.net by proxying to
+  # Grafana on localhost — tailnet MEMBERS ONLY (Funnel explicitly disabled). Mirrors the
+  # docs-site pattern (.ci/k8s/docs/): node state persists in the <fullname>-tailscale-state
+  # Secret; the auth key comes from a MANUALLY-created Secret (see NOTES). With it enabled the
+  # grafana Deployment switches to strategy Recreate — two live pods would fight over one
+  # tailnet node identity.
+  enabled: false
+  hostname: sentient-viz
+  image:
+    repository: tailscale/tailscale
+    # Digest-pinned like .ci/k8s/docs/deployment.yaml (stable, resolved 2026-07-17).
+    tag: stable@sha256:f15d5d3f4a68773a853180b72496f70ba614b64de0878c43fe3da39fe0afba47
+    pullPolicy: IfNotPresent
+  # Secret holding key TS_AUTHKEY; "" = <fullname>-tailscale-auth. Optional after first
+  # enrollment (state carries the identity), so it may be deleted post-join.
+  authSecretName: ""
+  rbac:
+    # The pod SA needs create + name-scoped get/update/patch on the state Secret. true = the
+    # chart renders the Role/RoleBinding (laptop/admin installs). Set false where the helm
+    # identity cannot create RBAC objects (the viz-uat CI deployer) — there the bring-up
+    # manifest .ci/k8s/viz-uat/rbac.yaml carries them.
+    create: true
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { memory: 256Mi }

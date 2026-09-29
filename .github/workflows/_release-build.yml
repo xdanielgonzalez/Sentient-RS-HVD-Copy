@@ -1,0 +1,216 @@
+name: _release-build (reusable)
+
+# Reusable workflow — the bin-rpi RELEASE builds. Called by production.yml.
+#
+# Two jobs, both uploading `bin-rpi-*` artifacts the publish job downloads:
+#   build       — glibc (aarch64-unknown-linux-gnu) matrix: the contract target for a stock
+#                 64-bit Pi OS. Native cross-compile (gcc-<triple> + CARGO_TARGET_*_LINKER), not
+#                 `cross`: the ARC job pods have no container engine for cross's per-target Docker
+#                 images, whereas the gcc linkers work directly inside sentient-builder (cf.
+#                 echelon-mesh), which bakes them. Crates resolve through the kellnr mirror via the
+#                 in-repo .cargo/config.toml (also baked into sentient-builder — see .ci/Dockerfile).
+#   build-musl  — aarch64-unknown-linux-musl static-PIE: the artifact the app sysext
+#                 (`sentient-app-sysext` / `sentient-agent-bin`) recipe packages. Kept as its own
+#                 job (not folded into the glibc matrix) because it feeds a DIFFERENT downstream
+#                 consumer (the BitBake prebuilt-binary recipe, via production.yml's `sysext` job)
+#                 and is ABI-independent by design: the glibc artifact is built against
+#                 Debian-bookworm glibc 2.36, which may not match whatever glibc the Yocto wrynose
+#                 rootfs ships — dropping a glibc-dynamic binary into that rootfs risks a load-time
+#                 ABI break. `+crt-static` on the musl target produces a fully-static binary with
+#                 no such dependency. We use rustls (ring backend — see workspace Cargo.toml's
+#                 rustls dep comment), not OpenSSL, so there is no vendored-OpenSSL-under-musl
+#                 static-link pain to work around here.
+
+# No secrets: the shared setup action only wires the NFS-backed sccache env (no MinIO cache
+# creds needed since the S3 target/ cache was dropped — see .github/actions/setup).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Cap rustc parallelism to bound peak memory per job — the ARC pool OOM-kills (exit 137,
+  # "ttrpc: closed") when the release builds run wide. Paired with `max-parallel: 1` on the build
+  # matrix below, so the release builds stay memory-bounded. Slower, but no longer OOM-killed
+  # (see #105).
+  CARGO_BUILD_JOBS: "2"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    permissions:
+      contents: read
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          # Only the Raspberry Pi 4/5 64-bit target ships. x86_64 and armv7 (32-bit Pi) were dropped —
+          # neither is on the roadmap (the Pi ships an aarch64 Yocto Linux image; there is no 32-bit
+          # Pi target). Re-add an entry here if a target returns to the roadmap.
+          - target: aarch64-unknown-linux-gnu   # Raspberry Pi 4/5, 64-bit OS (the contract target)
+            slug: linux-arm64
+            linker_env: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+            strip: aarch64-linux-gnu-strip
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      # The aarch64-unknown-linux-gnu target, its cross linker (gcc-aarch64-linux-gnu + strip),
+      # cargo-auditable, and cargo-cyclonedx are all baked into sentient-builder — no rust-target
+      # input, no apt install, no cargo install needed here anymore.
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # TEMPORARY: the current sentient-builder image was built with --no-install-recommends, which
+      # dropped the cross libc dev headers ring's build script needs (bits/libc-header-start.h).
+      # .ci/Dockerfile now bakes libc6-dev-{arm64,armhf}-cross — remove this step once the image is
+      # rebuilt + republished (`just publish-images`).
+      - name: Cross libc dev headers (until image rebuild)
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libc6-dev-arm64-cross libc6-dev-armhf-cross
+
+      # One optimized build with symbols (profiling profile), built auditable so the binary embeds
+      # its own dependency list (VERSION/deps JSON in a .cargo_auditable_deps section) for in-situ
+      # scanning. The stripped runnable binary is a stripped copy — same code, one with symbols for
+      # debugging and one lean to run.
+      - name: Build (profiling — optimized + symbols, auditable)
+        run: ${{ matrix.linker_env }} just build-auditable ${{ matrix.target }}
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ELF="target/${{ matrix.target }}/profiling/bin-rpi"
+          test -f "$ELF" || { echo "missing build output: $ELF"; exit 1; }
+          mkdir -p dist stage
+          # Unstripped ELF (symbols).
+          cp "$ELF" "dist/bin-rpi-${{ matrix.slug }}.elf"
+          # Stripped runnable binary (correct per-target strip).
+          cp "$ELF" "stage/bin-rpi"
+          ${{ matrix.strip }} "stage/bin-rpi"
+          cp "stage/bin-rpi" "dist/bin-rpi-${{ matrix.slug }}"
+          tar -czf "dist/bin-rpi-${{ matrix.slug }}.tar.gz" -C stage bin-rpi
+          ( cd dist && sha256sum bin-rpi-${{ matrix.slug }}* > "bin-rpi-${{ matrix.slug }}.sha256" )
+          ls -lh dist
+
+      # Per-target dep tree SBOM for the bin-rpi binary. cargo-cyclonedx writes one
+      # <crate>.cdx.json per workspace member next to its Cargo.toml (verified: --all here means
+      # "list all deps, not just top-level" — it is NOT a "generate for every crate" switch, but the
+      # default `--describe crate` scope still emits per-member files across the workspace).
+      - name: Generate SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo cyclonedx -f json --all --target ${{ matrix.target }}
+          cp "crates/bin/rpi/bin-rpi.cdx.json" "dist/bin-rpi-${{ matrix.slug }}.sbom.json"
+
+      # Security-gate evidence for the release bundle: cargo-audit (RustSec) + cargo-deny findings as
+      # JSON, staged next to the SBOM so the signed release carries its supply-chain posture — the
+      # gates PRODUCE uploadable results, in addition to the SBOM + signatures. These are workspace-
+      # level (target-independent), hence the target-agnostic `sentient-rs.cargo-*` name — which also
+      # keeps them OUT of the publish job's `bin-rpi-*` CMS-sign glob. Fully non-fatal (step-level
+      # continue-on-error + the recipe's `|| true`): an evidence hiccup must NEVER block a release.
+      - name: Generate security-gate evidence (audit + deny)
+        continue-on-error: true
+        shell: bash
+        run: |
+          just security-report target/security-reports || true
+          for f in cargo-audit.json cargo-deny.jsonl; do
+            if [ -f "target/security-reports/$f" ]; then
+              cp "target/security-reports/$f" "dist/sentient-rs.$f" || true
+            fi
+          done
+          ls -lh dist || true
+
+      # NOTE: the GitHub SLSA build-provenance attestation was REMOVED — it is "Feature not available
+      # for the High-Velocity-Decisions organization" (needs a paid plan / public repo), and on the
+      # self-hosted ARC runners its OIDC token request times out (malformed ACTIONS_ID_TOKEN_REQUEST_URL)
+      # and was cancelling the build. Provenance is the cosign keyless SHA256SUMS.cosign.bundle (publish
+      # job) + the X.509 CMS signatures. Re-add attest-build-provenance if the org plan is upgraded.
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bin-rpi-${{ matrix.slug }}
+          path: dist/*
+          if-no-files-found: error
+
+  build-musl:
+    name: Build bin-rpi (musl static)
+    permissions:
+      contents: read
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # No toolchain-prep step: sentient-builder (@67bd3174, rebuilt in #194) bakes the
+      # aarch64-unknown-linux-musl rustup target + the cross linker, so `just build-musl`'s
+      # `rustup target add` is an instant no-op and it links statically with nothing to install
+      # (the UAT lane's build-binary builds musl the same way, no apt/rustup step).
+      - name: Build (musl static, auditable)
+        run: just build-musl aarch64-unknown-linux-musl
+
+      - name: Verify static-PIE
+        shell: bash
+        run: |
+          set -euo pipefail
+          ELF="target/aarch64-unknown-linux-musl/profiling/bin-rpi"
+          test -f "$ELF" || { echo "missing build output: $ELF"; exit 1; }
+          file "$ELF"
+          # TODO(verify-at-build): confirm `readelf -h` reports Type: DYN (static-PIE) here, per
+          # CLAUDE.md's "verify with readelf -h rather than assume" hardening note. If the musl
+          # cross-linker refuses PIE, this step should instead assert Type: EXEC and the build
+          # recipe (justfile `build-musl`) falls back to `-C relocation-model=static` (documented
+          # ASLR regression) — do not silently accept either outcome without recording which one
+          # actually happened, since Phase 1H's hardening story depends on knowing which.
+          readelf -h "$ELF" | grep -E 'Type:' || true
+          ldd "$ELF" 2>&1 || true   # expect "not a dynamic executable" for a true static build
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ELF="target/aarch64-unknown-linux-musl/profiling/bin-rpi"
+          mkdir -p dist stage
+          cp "$ELF" "dist/bin-rpi-linux-arm64-musl.elf"
+          cp "$ELF" "stage/bin-rpi"
+          aarch64-linux-gnu-strip "stage/bin-rpi" || strip "stage/bin-rpi" || true
+          # TODO(verify-at-build): confirm which strip binary actually applies to a musl-target
+          # binary built via the gnu cross toolchain's linker — aarch64-linux-gnu-strip works on
+          # ELF regardless of libc, but re-verify against the actual produced binary rather than
+          # assuming, per the same "verify, don't assume" posture as the PIE check above.
+          cp "stage/bin-rpi" "dist/bin-rpi-linux-arm64-musl"
+          tar -czf "dist/bin-rpi-linux-arm64-musl.tar.gz" -C stage bin-rpi
+          ( cd dist && sha256sum bin-rpi-linux-arm64-musl* > "bin-rpi-linux-arm64-musl.sha256" )
+          ls -lh dist
+
+      - name: Generate SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo cyclonedx -f json --all --target aarch64-unknown-linux-musl
+          cp "crates/bin/rpi/bin-rpi.cdx.json" "dist/bin-rpi-linux-arm64-musl.sbom.json"
+
+      # attest-build-provenance removed — see the note in the `build` job (unavailable for this org +
+      # ARC OIDC timeout was cancelling the build). Provenance = cosign bundle + X.509 CMS.
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bin-rpi-linux-arm64-musl
+          path: dist/*
+          if-no-files-found: error

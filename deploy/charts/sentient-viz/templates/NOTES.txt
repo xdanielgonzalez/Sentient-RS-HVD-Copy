@@ -1,0 +1,43 @@
+sentient-viz deployed to namespace {{ .Release.Namespace }}.
+
+DEMO CREDENTIALS ARE COMMITTED DEFAULTS — override them anywhere shared
+(grafana.adminPassword, influxdb.adminPassword, influxdb.adminToken).
+
+1. Wait for the pods:
+
+     kubectl -n {{ .Release.Namespace }} get pods -w
+
+2. Open Grafana:
+{{- if .Values.tailscale.enabled }}
+
+   Tailnet (once the sidecar has joined — first boot needs the auth Secret):
+
+     kubectl -n {{ .Release.Namespace }} create secret generic {{ .Values.tailscale.authSecretName | default (printf "%s-tailscale-auth" (include "sentient-viz.fullname" .)) }} \
+       --from-literal=TS_AUTHKEY=tskey-auth-…   # reusable, pre-authorized key from the TS admin console
+
+   http://{{ .Values.tailscale.hostname }}.<tailnet>.ts.net   (tailnet members only — Funnel is disabled;
+   traffic is WireGuard-encrypted in transit. https:// additionally works once the tailnet's
+   MagicDNS + HTTPS Certificates feature is enabled — the :443 listener is already configured.)
+
+   Or locally:
+{{- end }}
+
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "sentient-viz.fullname" . }}-grafana {{ .Values.grafana.service.port }}:{{ .Values.grafana.service.port }}
+
+   http://localhost:{{ .Values.grafana.service.port }}  —  user {{ .Values.grafana.adminUser }} / password (grafana.adminPassword)
+   Dashboards land in the "Sentient" folder: Battery Overview + Cell Detail.
+   Steady-state sim numbers: ~53 V pack, -1.64 A, SOC 77.5 %, ~25 degC (values oscillate
+   gently around these when sim.drift is set — see values.yaml).
+
+3. Inject faults / change battery state (sim stdin FIFO):
+
+     kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "sentient-viz.fullname" . }}-sim -- \
+       sh -c 'echo "faults high_voltage_protection" > /ctl/sim.ctl'
+
+   Also: "faults none", "state current=-3000", "behavior silence" (watch the
+   heartbeat stat drop). Faults surface on the next fault poll (<= ~20 s at defaults).
+
+4. Teardown:
+
+     helm uninstall {{ .Release.Name }} -n {{ .Release.Namespace }}
+     # PVC {{ include "sentient-viz.fullname" . }}-influxdb keeps the history; delete it for a full reset.

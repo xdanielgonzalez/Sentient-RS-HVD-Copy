@@ -1,0 +1,18 @@
+{{- if .Values.influxdb.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-influxdb
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: influxdb
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.influxdb.persistence.size }}
+  {{- with .Values.influxdb.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

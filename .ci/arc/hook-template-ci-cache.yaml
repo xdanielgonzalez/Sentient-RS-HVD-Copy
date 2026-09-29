@@ -1,0 +1,33 @@
+# ARC container-hook extension: mounts the shared NFS ci-cache PVC into every k8s-mode JOB pod.
+#
+# In containerMode: kubernetes, workflow `container:` jobs run as separate pods created by the k8s
+# container hook (/home/runner/k8s/index.js). This template is merged into each job pod:
+#   - a container named "$job" targets the workflow's job container: env/volumeMounts get APPENDED
+#     to it (name/image on a "$..." entry are ignored — it's a selector, not a new container).
+#   - spec.volumes are APPENDED to the pod's default volumes.
+# Referenced from the runner via ACTIONS_RUNNER_CONTAINER_HOOK_TEMPLATE=/home/runner/pod-templates/default.yaml
+# (the runner mounts this ConfigMap there — see values-arc-runner-set.yaml).
+#
+# This REPLACES the dind-era `volumes: ['/ci-cache:/ci-cache']` we added to each workflow container:
+# block — remove those once k8s mode is live.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arc-hook-ci-cache
+  namespace: arc-runners
+data:
+  default.yaml: |
+    apiVersion: v1
+    kind: PodTemplate
+    metadata:
+      name: hook-ci-cache
+    spec:
+      containers:
+        - name: "$job"
+          volumeMounts:
+            - name: ci-cache
+              mountPath: /ci-cache
+      volumes:
+        - name: ci-cache
+          persistentVolumeClaim:
+            claimName: ci-cache

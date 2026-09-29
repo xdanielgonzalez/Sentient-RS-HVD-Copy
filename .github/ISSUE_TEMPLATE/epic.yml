@@ -1,0 +1,90 @@
+name: "Epic"
+description: "A high-level initiative spanning multiple Stories (e.g. EPIC #6 \"Deliverables\", EPIC #9 \"Testing & TMS compliance\")."
+title: "EPIC: "
+labels: ["epic"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for a scope-level tracking issue that spans multiple **Stories** (each Story
+        breaks down into **Tasks**). See existing epics (e.g. #6, #9) for the shape this repo uses.
+        Link child stories with GitHub sub-issues and/or the checklist below — keep this issue as
+        the single place reviewers go to see overall status.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One paragraph — what is this epic and why does it exist?
+      placeholder: |
+        e.g. Pivot the Raspberry Pi shipping target from Zephyr to a Yocto Linux image
+        (core-image-minimal + systemd) running the existing bin-rpi binary; MCU boards stay on Zephyr.
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal / outcome
+      description: What does "done" look like at the program level? What capability or deliverable does this unlock?
+      placeholder: "e.g. Signed .wic image + SPDX SBOM published by release.yml alongside bin-rpi/bin-zephyr."
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope_in
+    attributes:
+      label: In scope
+      description: What is explicitly covered by this epic?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope_out
+    attributes:
+      label: Out of scope
+      description: What is explicitly deferred or descoped, and where (if anywhere) that work is tracked instead. Record the decision, not just the omission.
+      placeholder: "e.g. meta-zephyr BBMULTICONFIG convergence deferred — tracked separately in #158."
+    validations:
+      required: false
+
+  - type: textarea
+    id: child_stories
+    attributes:
+      label: Child stories
+      description: Checklist of the Stories under this epic. Add rows as stories are filed; link the issue number.
+      placeholder: |
+        - [ ] #NNN — Story title
+        - [ ] #NNN — Story title
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: success_criteria
+    attributes:
+      label: Success criteria / acceptance
+      description: Concrete, verifiable conditions that mean this epic is complete (gates that must be green, artifacts that must exist).
+      placeholder: |
+        - `just ci` green on main
+        - Hardened posture verified: systemd-analyze security in range, nftables + mosquitto TLS/auth
+        - Functional QEMU e2e (Seplos -> TMS -> MQTT) gates the release
+    validations:
+      required: true
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks / open questions
+      description: Known risks, residual posture gaps, or decisions still pending. Be honest about accepted risk (e.g. the Pi's closed VideoCore BootROM = no fully-open root of trust).
+    validations:
+      required: false
+
+  - type: input
+    id: milestone
+    attributes:
+      label: Target milestone
+      description: Release/milestone this epic targets, if known. Leave blank if unscheduled.
+      placeholder: "M5 (T&V) / v0.3.0"
+    validations:
+      required: false

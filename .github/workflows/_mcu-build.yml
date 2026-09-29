@@ -1,0 +1,178 @@
+name: _mcu-build (reusable)
+
+# Reusable workflow: cross-builds MCU firmware and publishes the ELF(s) as a build artifact, one
+# artifact per chip. Called by uat.yml (post-merge — publishes the firmware for HIL/inspection) and
+# production.yml (v-tag release — the ELF becomes a release asset).
+#
+# CHIP MATRIX — adding a new MCU target (e.g. STM32H5) is a ONE-LINE addition: append an `include`
+# entry below with this chip's own { chip, target, workspace, recipe, elf, extra_elf, apt_packages }.
+# Nothing else in this file (or either caller) hardcodes rp2350 — every per-chip value is read out of
+# `matrix.*`. Field meaning:
+#   chip          - short slug, used to name the uploaded artifact (mcu-firmware-<chip>) and the
+#                   staged filenames.
+#   target        - the Rust target triple. `rustup target add` is run for it even though
+#                   sentient-builder already bakes thumbv7em-none-eabihf + thumbv8m.main-none-eabihf
+#                   (.ci/Dockerfile) — idempotent, and it means a future chip whose target ISN'T
+#                   pre-baked still works without an image rebuild.
+#   workspace     - the chip's OWN excluded workspace (own Cargo.lock/[workspace], not a member of
+#                   the root sentient-rs workspace) — informational here (the justfile recipe does
+#                   its own `cd`), but also used below to run one deterministic follow-up build.
+#   recipe        - the justfile recipe that builds this chip's firmware (mirrors the `mcu-rp2350`
+#                   recipe's runner/toolchain expectations).
+#   elf           - repo-root-relative path to the PRIMARY firmware ELF the recipe produces.
+#   extra_elf     - optional second ELF to stage alongside the primary one (e.g. rp2350's TrustZone
+#                   Secure-world `rp2350-s`); '' if the chip has no second image.
+#   apt_packages  - optional space-separated extra apt packages this chip's build needs beyond what
+#                   sentient-builder bakes (e.g. rp2350's CMSE-capable `gcc-arm-none-eabi` — the
+#                   PUBLISHED image only carries `gcc-arm-linux-gnueabihf`, a Linux-userspace cross
+#                   compiler, not the bare-metal one the S-world veneer build invokes via `cc`);
+#                   '' if none needed.
+#                   INTERIM: `.ci/Dockerfile` now bakes gcc-arm-none-eabi, which is where it belongs.
+#                   Until builder-image.yml is dispatched to rebuild + republish sentient-builder and
+#                   the digest pin is bumped repo-wide, the runtime install below is what actually
+#                   supplies it. Set this field to '' in the same commit as the digest bump — the
+#                   step is a harmless no-op reinstall in the meantime, so the two can land in either
+#                   order without breaking the lane.
+#   test_recipe   - optional justfile recipe that runs this chip's HOST-testable unit tests (test
+#                   speed/coverage investigation: before this field existed, nothing anywhere ran
+#                   `cargo test` in this excluded workspace — this job only ever built it). '' if the
+#                   chip has no host-testable slice yet (e.g. everything in it needs real hardware).
+#                   rp2350's `mcu-rp2350-test` runs `rp2350-abi` (zero embassy/cortex-m deps) under
+#                   `--target x86_64-unknown-linux-gnu`; see that recipe's own comment for why `ns`
+#                   can't join it. NOTE: this only runs on the SAME cadence as the build above
+#                   (uat.yml post-merge, production.yml release) — not on every PR — matching the
+#                   existing MCU build's cadence rather than introducing a new one.
+#
+# Plain rust cross-build — no docker/buildx — so this runs on the same runner class as the existing
+# `no_std build (MCU)` lane (_test.yml) and does NOT need arc-dind.
+
+on:
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: mcu build (${{ matrix.chip }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # RP2350A / Cortex-M33 (EPIC #350). `ns` (non-secure world) is the shipping/inspection
+          # artifact; `rp2350-s` (TrustZone Secure world) ships alongside it as the S image.
+          - chip: rp2350
+            target: thumbv8m.main-none-eabihf
+            workspace: crates/bin/mcu-rp2350
+            recipe: mcu-rp2350
+            elf: crates/bin/mcu-rp2350/target/thumbv8m.main-none-eabihf/release/ns
+            extra_elf: crates/bin/mcu-rp2350/target/thumbv8m.main-none-eabihf/release/rp2350-s
+            # libnewlib-arm-none-eabi is only a *recommended* dep of gcc-arm-none-eabi, and the
+            # install step uses --no-install-recommends — so it MUST be named explicitly or the
+            # compiler lands with no freestanding C headers and the S-world veneer fails with
+            # "veneer.c:15:10: fatal error: string.h: No such file or directory".
+            apt_packages: gcc-arm-none-eabi libnewlib-arm-none-eabi
+            test_recipe: mcu-rp2350-test
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 20
+    # MUST be bash. In ARC kubernetes (container) mode a `run:` step with no explicit `shell:` is
+    # executed as `sh -e {0}` — dash, not bash — so `set -euo pipefail` dies on the spot with
+    # "1: set: Illegal option -o pipefail" (exit 2) before a single command runs. That is what broke
+    # the `Install extra apt packages` step (and would have broken the two `set -euo pipefail` steps
+    # after it). The other container jobs in this repo either declare `shell: bash` per step
+    # (_release-build.yml, _test.yml) or use plain POSIX bodies (wolfcrypt.yml); one job-level
+    # default covers every step here at once.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+          # This job only builds firmware and uploads the ELF — it never pushes. Don't leave the
+          # token in .git/config, where it could ride along into an uploaded artifact (zizmor
+          # `artipacked`). Submodule fetch still works: credentials are available DURING checkout;
+          # this only controls whether they persist afterwards.
+          persist-credentials: false
+
+      # `just` is baked into sentient-builder (mirrors the `no-std` job in _test.yml); this also
+      # wires the shared sccache compiler cache.
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: rustup target add ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: rustup target add "$TARGET"
+
+      # Extra system packages this chip's build needs that sentient-builder doesn't bake (see the
+      # `apt_packages` field doc above). A no-op step (empty `if`) for a chip that needs nothing extra.
+      - name: Install extra apt packages
+        if: matrix.apt_packages != ''
+        env:
+          APT_PACKAGES: ${{ matrix.apt_packages }}
+        run: |
+          set -euo pipefail
+          apt-get update
+          # shellcheck disable=SC2086 — intentional word-splitting of a space-separated package list.
+          apt-get install -y --no-install-recommends $APT_PACKAGES
+
+      - name: just ${{ matrix.recipe }}
+        env:
+          RECIPE: ${{ matrix.recipe }}
+        run: just "$RECIPE"
+
+      # Host-testable slice of this chip's excluded workspace (see the `test_recipe` field doc
+      # above) — a no-op step for a chip that doesn't have one yet.
+      - name: just ${{ matrix.test_recipe }}
+        if: matrix.test_recipe != ''
+        env:
+          TEST_RECIPE: ${{ matrix.test_recipe }}
+        run: just "$TEST_RECIPE"
+
+      # `mcu-rp2350` builds `ns` several times over (plain, +defmt, +defmt+core1-parser, +core1-parser,
+      # +defmt,power,neopixel,ui and +defmt,power,neopixel,mesh — the delight-feature matrix)
+      # — every invocation writes the SAME `target/<triple>/release/ns` path, so whichever build ran
+      # LAST in the recipe is what's on disk when the recipe finishes (currently `--features
+      # core1-parser` alone, since `--features veneers` is skipped pre-veneer-implib). Rebuild the
+      # PLAIN default-feature `ns` right before staging so the artifact this job publishes is always
+      # deterministic — the "Stage-1 shape" build (no TrustZone toggles, no S-world dependency) the
+      # justfile's own `mcu-rp2350` doc comment calls out as the one that must build clean — rather
+      # than an incidental function of the recipe's internal line order. Cheap: everything is already
+      # built, so this is an instant no-op recompile check.
+      - name: Rebuild primary ELF (plain default features, deterministic)
+        env:
+          WORKSPACE: ${{ matrix.workspace }}
+        run: |
+          set -euo pipefail
+          cd "$WORKSPACE" && cargo build --release -p ns
+
+      - name: Stage firmware artifact(s)
+        id: stage
+        env:
+          CHIP: ${{ matrix.chip }}
+          ELF: ${{ matrix.elf }}
+          EXTRA_ELF: ${{ matrix.extra_elf }}
+        run: |
+          set -euo pipefail
+          DIST="mcu-dist/${CHIP}"
+          mkdir -p "$DIST"
+          [ -f "$ELF" ] || { echo "::error::expected primary ELF not found at $ELF"; exit 1; }
+          cp "$ELF" "$DIST/mcu-firmware-${CHIP}-ns.elf"
+          if [ -n "$EXTRA_ELF" ]; then
+            [ -f "$EXTRA_ELF" ] || { echo "::error::expected extra ELF not found at $EXTRA_ELF"; exit 1; }
+            cp "$EXTRA_ELF" "$DIST/mcu-firmware-${CHIP}-s.elf"
+          fi
+          echo "dist=$DIST" >> "$GITHUB_OUTPUT"
+
+      - name: Upload mcu-firmware-${{ matrix.chip }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcu-firmware-${{ matrix.chip }}
+          path: ${{ steps.stage.outputs.dist }}
+          if-no-files-found: error

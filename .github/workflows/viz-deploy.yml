@@ -1,0 +1,53 @@
+name: viz deploy
+
+# ENVIRONMENT DEPLOYMENT — split out of uat.yml (#377).
+#
+# uat.yml verifies DELIVERY: does the artifact we are about to ship actually work (qemu boot +
+# preflight of the aarch64 bin-rpi, the no_std MCU stack-size gate, the MCU firmware ELF). This
+# workflow performs a DEPLOYMENT: it helm-upgrades the sentient-viz stack into the standing
+# `viz-uat` namespace on the live build-github k3s cluster.
+#
+# They fail for completely different reasons. A deployment lane's failure modes are infrastructure
+# — helm/k3s API reachability, Harbor pulls, MinIO, node capacity, PVC pressure — none of which say
+# anything about whether the binary we are cutting a release from is healthy. While the two lived in
+# one workflow, a cluster hiccup turned the whole UAT run red and masked delivery health, even
+# though uat.yml's `promote` gate never depended on the viz lane at all. Separate workflows =
+# separate red/green signals, separate concurrency, separate reruns.
+#
+# The reusable `_viz-uat.yml` is UNCHANGED by the split; only this caller moved out of uat.yml.
+#
+# TRIGGER: the path list below is the same set `_viz-uat.yml`'s in-job "Decide whether this merge
+# touches the viz stack" guard already greps for, lifted up to the trigger so an unrelated merge
+# doesn't even spin a runner. The in-job guard is kept as-is (it also covers workflow_dispatch and
+# is the reusable workflow's own business) — belt and braces, and it keeps `_viz-uat.yml` callable
+# from anywhere without depending on its caller's filter.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.ci/scripts/viz-uat/**'
+      - '.github/actions/setup-k8s-tools/**'
+      - '.github/workflows/viz-deploy.yml'
+      - '.github/workflows/_viz-uat.yml'
+  workflow_dispatch:
+
+# Its OWN group — deliberately NOT `uat-${{ github.ref }}`. Sharing uat.yml's group would make a
+# 45-minute cluster deploy queue behind (or in front of) the delivery gate, which is exactly the
+# coupling this split removes. Serialized against itself, not cancelled: helm upgrades into a fixed
+# namespace/release must not race, and a half-applied cancelled upgrade is worse than a slow queue.
+concurrency:
+  group: viz-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  viz-uat:
+    name: viz UAT
+    uses: ./.github/workflows/_viz-uat.yml
+    secrets: inherit

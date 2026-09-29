@@ -1,0 +1,164 @@
+name: CMS sign (X.509)
+description: >-
+  Shared openssl X.509 CMS sign/verify flow used across the release + image pipelines: `openssl cms
+  -sign` a set of files (or, in `validate` mode, a throwaway blob) against SIGNING_KEY/SIGNING_CRT,
+  then verify — preferring a full CA-chained verify (CA_CRT), degrading to a signature-only
+  `-noverify` for a self-signed / pre-release cert, and hard-failing only on an actually-invalid
+  signature. Composite actions cannot read `secrets.*` implicitly, so the signing materials are
+  taken as explicit inputs — pass them from the caller's `secrets.*` context.
+
+inputs:
+  signing-key:
+    description: PEM-encoded signing private key (secrets.SIGNING_KEY).
+    required: true
+  signing-crt:
+    description: PEM-encoded signer certificate (secrets.SIGNING_CRT).
+    required: true
+  ca-crt:
+    description: PEM-encoded CA certificate, the trust anchor for the CA-chained verify (secrets.CA_CRT).
+    required: true
+  mode:
+    description: >-
+      "sign" (default) — CMS-sign each file matched by `files` (glob-tolerant, relative to
+      `working-directory`), emitting `<file>.p7s` + `signing-cert.pem` + `ca.pem`. "validate" — the
+      fast preflight: sign+verify a throwaway blob only (no file inputs/outputs), hard-fail on any
+      of the three secrets being unset, and set the `tier` output. Mirrors production.yml's
+      `validate-signing` job exactly.
+    required: false
+    default: sign
+  files:
+    description: >-
+      Space-separated list of glob patterns (relative to `working-directory`), evaluated with
+      `nullglob` — e.g. "sentient-image-*.wic sentient-image-*.wic.bz2". Required when mode=sign.
+    required: false
+    default: ''
+  exclude-pattern:
+    description: >-
+      Optional space-separated list of shell glob patterns (e.g. "*.elf *.tar.gz *.sha256") of
+      matched files to SKIP signing — for a `files` glob (like "bin-rpi-*") that also matches
+      non-binary siblings such as the .elf/.tar.gz/.sha256/.sbom.json/.p7s/.pem outputs.
+    required: false
+    default: ''
+  working-directory:
+    description: Directory (relative to the workspace) that `files`/`exclude-pattern` are evaluated in.
+    required: false
+    default: '.'
+  skip-on-missing-secrets:
+    description: >-
+      mode=sign only. If any of signing-key/signing-crt/ca-crt is empty, emit a `::warning::` and
+      exit 0 (skip signing) instead of failing. Matches every mode=sign call site's existing
+      degrade. mode=validate always hard-fails on a missing secret (matches validate-signing).
+    required: false
+    default: 'true'
+
+outputs:
+  tier:
+    description: >-
+      mode=validate only: "release" (signer chains to ca-crt) or "prerelease" (valid signature,
+      self-signed / non-CA-issued cert). mode=sign leaves this empty (each signed file's own
+      degrade is logged via ::notice::/::warning::, not surfaced as a single tier).
+    value: ${{ steps.classify.outputs.tier }}
+
+runs:
+  using: composite
+  steps:
+    - name: CMS sign / validate
+      id: classify
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SIGNING_KEY: ${{ inputs.signing-key }}
+        SIGNING_CRT: ${{ inputs.signing-crt }}
+        CA_CRT: ${{ inputs.ca-crt }}
+        MODE: ${{ inputs.mode }}
+        FILES: ${{ inputs.files }}
+        EXCLUDE_PATTERN: ${{ inputs.exclude-pattern }}
+        SKIP_ON_MISSING: ${{ inputs.skip-on-missing-secrets }}
+      run: |
+        set -uo pipefail
+
+        if [ "$MODE" = "validate" ]; then
+          # --- validate mode: EXACT port of production.yml's former `validate-signing` job body. ---
+          set -o pipefail
+          for v in SIGNING_KEY SIGNING_CRT CA_CRT; do
+            [ -n "${!v:-}" ] || { echo "::error::$v is not set"; exit 1; }
+          done
+          command -v openssl >/dev/null 2>&1 || { echo "::error::openssl missing in the builder image"; exit 1; }
+          K="$(mktemp)"; C="$(mktemp)"; A="$(mktemp)"; B="$(mktemp)"; S="$(mktemp)"
+          trap 'shred -u "$K" 2>/dev/null || rm -f "$K"; rm -f "$C" "$A" "$B" "$S"' EXIT
+          printf '%s\n' "$SIGNING_KEY" > "$K"
+          printf '%s\n' "$SIGNING_CRT" > "$C"
+          printf '%s\n' "$CA_CRT"      > "$A"
+          head -c 4096 /dev/urandom > "$B"
+          echo "== signer cert =="; openssl x509 -in "$C" -noout -subject -issuer -dates \
+            || { echo "::error::SIGNING_CRT is not a valid X.509 certificate (PEM)"; exit 1; }
+          openssl x509 -in "$A" -noout -subject >/dev/null \
+            || { echo "::error::CA_CRT is not a valid X.509 certificate (PEM)"; exit 1; }
+          # SIGNING_KEY must correspond to SIGNING_CRT (identical public keys).
+          ck="$(openssl x509 -in "$C" -noout -pubkey 2>/dev/null | openssl md5)"
+          kk="$(openssl pkey -in "$K" -pubout 2>/dev/null | openssl md5)"
+          { [ -n "$kk" ] && [ "$ck" = "$kk" ]; } \
+            || { echo "::error::SIGNING_KEY does not match SIGNING_CRT (public keys differ / key not readable)"; exit 1; }
+          openssl verify -CAfile "$A" "$C" >/dev/null 2>&1 \
+            && echo "signer cert chains to CA_CRT" \
+            || echo "::warning::openssl verify: signer cert does not chain cleanly to CA_CRT (the CMS -CAfile test below is authoritative)"
+          # THE EXACT release flow: detached CMS sign, then classify the trust TIER.
+          openssl cms -sign -binary -in "$B" -signer "$C" -inkey "$K" -certfile "$A" -outform DER -out "$S" \
+            || { echo "::error::openssl cms -sign failed with SIGNING_KEY/SIGNING_CRT"; exit 1; }
+          if openssl cms -verify -binary -content "$B" -in "$S" -inform DER -CAfile "$A" -out /dev/null 2>/dev/null; then
+            TIER=release
+            echo "::notice::SIGNING_* VALID (CA-chained) — FULL release tier"
+          elif openssl cms -verify -binary -content "$B" -in "$S" -inform DER -noverify -out /dev/null 2>/dev/null; then
+            TIER=prerelease
+            echo "::warning::SIGNING_* signature is cryptographically valid but the signer cert does NOT chain to CA_CRT (self-signed, e.g. CN=example.local) — PRE-RELEASE tier only. Provision a CA-issued signer for a full release."
+          else
+            echo "::error::CMS verify failed even with -noverify — SIGNING_KEY/SIGNING_CRT cannot produce a valid signature"; exit 1
+          fi
+          echo "tier=$TIER" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # --- sign mode: EXACT port of the 4 file-signing call sites (_yocto.yml golden bundle +
+        # shipping .wic glob-loop, production.yml sysext .raw, production.yml release RPi binaries).
+        if [ -z "${SIGNING_KEY:-}" ] || [ -z "${SIGNING_CRT:-}" ] || [ -z "${CA_CRT:-}" ]; then
+          if [ "$SKIP_ON_MISSING" = "true" ]; then
+            echo "::warning::SIGNING_KEY/SIGNING_CRT/CA_CRT not all set — skipping X.509 signing."
+            exit 0
+          else
+            echo "::error::SIGNING_KEY/SIGNING_CRT/CA_CRT not all set"; exit 1
+          fi
+        fi
+        command -v openssl >/dev/null 2>&1 || { echo "::error::openssl not found — cannot CMS-sign"; exit 1; }
+        K="$(mktemp)"; C="$(mktemp)"; A="$(mktemp)"
+        trap 'shred -u "$K" 2>/dev/null || rm -f "$K"; rm -f "$C" "$A"' EXIT
+        printf '%s\n' "$SIGNING_KEY" > "$K"
+        printf '%s\n' "$SIGNING_CRT" > "$C"
+        printf '%s\n' "$CA_CRT"      > "$A"
+
+        shopt -s nullglob
+        # FILES is a space-separated list of glob patterns — deliberately word-split (unquoted), same
+        # as each original call site's `for f in a-*.ext b-*.ext; do` loop.
+        # shellcheck disable=SC2086
+        for f in $FILES; do
+          [ -f "$f" ] || continue
+          skip=0
+          if [ -n "$EXCLUDE_PATTERN" ]; then
+            for pat in $EXCLUDE_PATTERN; do
+              case "$f" in
+                $pat) skip=1; break ;;
+              esac
+            done
+          fi
+          [ "$skip" = 1 ] && continue
+          openssl cms -sign -binary -in "$f" -signer "$C" -inkey "$K" -certfile "$A" -outform DER -out "$f.p7s"
+          if openssl cms -verify -binary -content "$f" -in "$f.p7s" -inform DER -CAfile "$A" -out /dev/null 2>/dev/null; then
+            echo "::notice::signed + CA-verified $f.p7s"
+          elif openssl cms -verify -binary -content "$f" -in "$f.p7s" -inform DER -noverify -out /dev/null 2>/dev/null; then
+            echo "::warning::signed $f.p7s but signer cert is not CA-trusted (pre-release / self-signed cert)"
+          else
+            echo "::error::signature verify failed for $f.p7s"; exit 1
+          fi
+        done
+        # Ship the signer cert + CA alongside so any consumer can verify the .p7s (public certs only).
+        cp "$C" signing-cert.pem
+        cp "$A" ca.pem

@@ -1,0 +1,21 @@
+# Required release assets — the SINGLE source of truth for what a complete release carries.
+# Consumed by BOTH gates (they were hand-duplicated before and had to be kept in lockstep by eye):
+#   - .ci/scripts/release/verify-release-assets.sh  (production.yml / _release-publish.yml —
+#     hard gate right after softprops publishes)
+#   - promote.yml  (refuses to promote a candidate that is short any of these)
+# One asset filename per line; blank lines and # comments are ignored.
+bin-rpi-linux-arm64
+bin-rpi-linux-arm64.p7s
+bin-rpi-linux-arm64-musl
+bin-rpi-linux-arm64-musl.p7s
+sentient-image-raspberrypi5.wic.bz2
+sentient-image-raspberrypi5.wic.bz2.p7s
+sentient-image-raspberrypi4-64.wic.bz2
+sentient-image-raspberrypi4-64.wic.bz2.p7s
+sentient-app-raspberrypi5.raw
+sentient-app-raspberrypi5.raw.p7s
+sentient-app-raspberrypi4-64.raw
+sentient-app-raspberrypi4-64.raw.p7s
+SHA256SUMS
+signing-cert.pem
+ca.pem

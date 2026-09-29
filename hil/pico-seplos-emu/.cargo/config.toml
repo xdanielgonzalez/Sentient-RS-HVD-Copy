@@ -1,0 +1,10 @@
+# Verified against /mnt/d/hvd/embassy-rp2040-template/.cargo/config.toml (a working embassy-rp
+# project on this machine) — same target, same runner. probe-rs is commented out there too: this
+# firmware needs no debug probe/JTAG (it's a fixed, deterministic emulator, not code under active
+# on-target debugging) — elf2uf2-rs's BOOTSEL-drive UF2 flash is the simplest path. Install with
+# `cargo install elf2uf2-rs`.
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "elf2uf2-rs --deploy --serial --verbose"
+
+[build]
+target = "thumbv8m.main-none-eabihf" # RP2350A = Cortex-M33

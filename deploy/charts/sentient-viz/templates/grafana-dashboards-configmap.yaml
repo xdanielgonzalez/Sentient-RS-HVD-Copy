@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-grafana-dashboards
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  # Dashboards stay hand-editable JSON files under the chart's dashboards/ dir.
+  # Never passed through tpl — Grafana JSON may legitimately contain {{ "{{ }}" }}.
+{{ (.Files.Glob "dashboards/*.json").AsConfig | indent 2 }}

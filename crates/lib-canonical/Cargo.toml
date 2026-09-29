@@ -1,0 +1,19 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "lib-canonical"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Vendor-neutral canonical device model (CanonicalReading/CanonicalFault + the RS-232 inverter reading/fault/mode/ratings). Pure data: heapless + serde only, no_std/no_alloc, zero I/O. Every feature-gated vendor parser in lib-parse produces these; the lib-mapping bridge consumes only these (never a vendor's own types, never a TMS type). Sibling of lib-tms — neither depends on the other."
+
+[dependencies]
+heapless = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+
+[dev-dependencies]
+postcard = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,169 @@
+name: _test (reusable)
+
+# Reusable workflow: Stage-2 jobs that run after the lint gate — the plain test, the doctest
+# lane, the no_std build, and the acceptance + e2e suites. Called only via `workflow_call`.
+
+# No secrets: the shared setup action only wires the NFS-backed sccache env (no MinIO cache creds
+# needed since the S3 target/ cache was dropped — see .github/actions/setup).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Split into three parallel jobs (was one sequential job): the host test suite, the cucumber
+  # acceptance suite, and the no_std MCU cross-build are independent, so they run concurrently on
+  # their own runners. The shared NFS sccache (/ci-cache) makes the parallel recompiles cheap.
+  test:
+    name: test
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - name: Setup
+        uses: ./.github/actions/setup
+      # `just test` excludes test-e2e and test-acceptance (each double-runs otherwise; see the
+      # justfile's `test` recipe comment) — they're covered by their own `acceptance`/`e2e` jobs below.
+      # It also passes --all-targets, so doctests run ONLY in the `doctest` job — no double-run.
+      - name: just test
+        run: just test
+      # PROVE-IT visibility: confirm sccache is on the NFS local dir (Storage location: /ci-cache/…)
+      # and show hit/miss so we can compare cold vs warm. Remove once the rollout decision is made.
+      - name: sccache stats (NFS prove-it)
+        if: always()
+        run: sccache --show-stats || true
+
+  # Doctest-only lane (justfile `test-doc`): every rustdoc example in the workspace compiles and
+  # runs — the ONLY place doctests execute. `just test` passes --all-targets (which excludes the
+  # --doc target), so the unit/doctest split is disjoint by construction: previously plain
+  # `cargo test --workspace` ALSO ran every doctest, silently double-running them across the two
+  # jobs. A doc-example regression fails HERE by name instead of burying itself in the full
+  # workspace run.
+  doctest:
+    name: doctests
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: just test-doc
+        run: just test-doc
+
+  acceptance:
+    name: acceptance (cucumber)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - name: Setup
+        uses: ./.github/actions/setup
+      # Human-readable cucumber-rs (Gherkin) spec-alignment suite (Seplos -> Canonical -> TMS).
+      # `harness = false`, so it is NOT nextest-runnable — runs here, never in the `e2e` nextest job.
+      # NOTE: no machine-readable (JUnit) output today — cucumber-rs's `output-junit` feature +
+      # writer chain would need a source change to tests/cucumber.rs (out of this workflow-only
+      # change's scope); capture the human-readable Basic-writer output and summarize scenario
+      # pass/fail counts from it instead (a Check via test-reporter needs structured input, so
+      # only the summary is published here — no Check for this lane yet).
+      - name: just test-acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          just test-acceptance 2>&1 | tee cucumber-output.txt
+
+      - name: Publish acceptance summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## acceptance (cucumber) results"
+            echo
+            echo '```'
+            grep -E '^[0-9]+ (feature|scenario|step)s? \(' cucumber-output.txt || echo "(no summary line found — see full log artifact)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  no-std:
+    name: no_std build (MCU)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      # `just` + the thumbv7em-none-eabihf target (build-no-std) are baked into sentient-builder.
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: just build-no-std
+        run: just build-no-std
+
+  e2e:
+    name: test-e2e (real pty + broker, nextest)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # Process-per-test isolation for the real-pty + real-broker cross-crate e2e tests, moved into
+      # `test-e2e` in #99. `.config/nextest.toml` serializes the pty/broker tests against each
+      # other (a `seplos-e2e` test-group); `serial_test::file_serial` backs the same exclusion with
+      # a cross-process file lock so it holds even outside nextest. cargo-nextest is baked into
+      # sentient-builder — no per-run install. `.config/nextest.toml`'s `[profile.default.junit]`
+      # makes this ALSO write target/nextest/default/junit.xml, published below.
+      - name: just test-e2e (test-e2e, real pty + real rumqttd)
+        run: just test-e2e
+
+      # Native step summary (no extra perms) — always runs so a failing suite still shows a table.
+      # The parser is a checked-in script (.ci/scripts/junit_to_summary.py), not an inline heredoc —
+      # keeps this step's YAML block-scalar indentation simple and the script independently testable.
+      - name: Publish test-e2e summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          JUNIT="target/nextest/default/junit.xml"
+          {
+            echo "## test-e2e (nextest) results"
+            echo
+            if [ -f "$JUNIT" ]; then
+              python3 .ci/scripts/junit_to_summary.py "$JUNIT"
+            else
+              echo "_no junit.xml produced (job likely failed before nextest ran)_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Upload the JUnit so ci.yml's `publish-reports` job (GitHub-hosted, NOT the ARC pods — dorny/
+      # test-reporter can't run under ARC's container hook) can turn it into a per-test-case Check.
+      # if-no-files-found: error — a missing junit.xml here means the report silently stops being
+      # published downstream (ci.yml's publish-test-report job would just get an empty artifact
+      # and dorny/test-reporter would no-op). Fail loudly instead of warning into a green step.
+      - name: Upload test-e2e junit
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-test-e2e
+          path: target/nextest/default/junit.xml
+          if-no-files-found: error
+

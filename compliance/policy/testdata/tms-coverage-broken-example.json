@@ -1,0 +1,1205 @@
+{
+  "_broken_for_test": "INTENTIONALLY BROKEN fixture for compliance/policy Rego self-test (see justfile tms-policy-selftest). Derived from docs/compliance/tms/tms-coverage.json with three deliberate corruptions: (1) Heartbeat topic binding stripped -- Required-topic gap; (2) tms::dc::LoadSharingState (DcLoadSharingState topic) binding stripped -- Conditional-topic gap; (3) Reply.idl_line set to 0 -- provenance gap. conftest against this file MUST fail with exactly these findings; NOT used by tms-attest-check.",
+  "_generated": "by tms-idl-codegen from docs/compliance/tms/mil-std-3071_data_model.idl \u2014 DO NOT EDIT; regenerate with `just tms-codegen`",
+  "types": [
+    {
+      "name": "Point2D",
+      "module": "tms",
+      "idl_line": 1149,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "Curve2D",
+      "module": "tms",
+      "idl_line": 1179,
+      "topics": [],
+      "fields": 1,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ControlCurve",
+      "module": "tms",
+      "idl_line": 1194,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "GridRequest",
+      "module": "tms",
+      "idl_line": 1219,
+      "topics": [],
+      "fields": 1,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ClockMonotonic",
+      "module": "tms",
+      "idl_line": 1234,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ThermalInfo",
+      "module": "tms",
+      "idl_line": 1254,
+      "topics": [],
+      "fields": 1,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ThermalState",
+      "module": "tms",
+      "idl_line": 1269,
+      "topics": [],
+      "fields": 1,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "SynchronousMachineCoefficients",
+      "module": "tms",
+      "idl_line": 1284,
+      "topics": [],
+      "fields": 20,
+      "keys": 0,
+      "optional": 0,
+      "units": 20,
+      "ranges": 0
+    },
+    {
+      "name": "PowerElectronicsInfo",
+      "module": "tms",
+      "idl_line": 1434,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 2,
+      "ranges": 0
+    },
+    {
+      "name": "PowerElectronicsState",
+      "module": "tms",
+      "idl_line": 1464,
+      "topics": [],
+      "fields": 1,
+      "keys": 0,
+      "optional": 0,
+      "units": 1,
+      "ranges": 0
+    },
+    {
+      "name": "StorageCellState",
+      "module": "tms",
+      "idl_line": 1496,
+      "topics": [],
+      "fields": 5,
+      "keys": 0,
+      "optional": 1,
+      "units": 3,
+      "ranges": 1
+    },
+    {
+      "name": "EnergyStorageState",
+      "module": "tms",
+      "idl_line": 1555,
+      "topics": [],
+      "fields": 5,
+      "keys": 0,
+      "optional": 0,
+      "units": 4,
+      "ranges": 0
+    },
+    {
+      "name": "EnergyStorageInfo",
+      "module": "tms",
+      "idl_line": 1607,
+      "topics": [],
+      "fields": 5,
+      "keys": 0,
+      "optional": 2,
+      "units": 5,
+      "ranges": 2
+    },
+    {
+      "name": "GeneratorInfo",
+      "module": "tms",
+      "idl_line": 1671,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 3,
+      "ranges": 0
+    },
+    {
+      "name": "GeneratorState",
+      "module": "tms",
+      "idl_line": 1705,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 2,
+      "ranges": 0
+    },
+    {
+      "name": "EngineInfo",
+      "module": "tms",
+      "idl_line": 1729,
+      "topics": [],
+      "fields": 8,
+      "keys": 0,
+      "optional": 0,
+      "units": 8,
+      "ranges": 0
+    },
+    {
+      "name": "EngineState",
+      "module": "tms",
+      "idl_line": 1831,
+      "topics": [],
+      "fields": 7,
+      "keys": 0,
+      "optional": 2,
+      "units": 6,
+      "ranges": 2
+    },
+    {
+      "name": "FuelInfo",
+      "module": "tms",
+      "idl_line": 1903,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 2,
+      "ranges": 1
+    },
+    {
+      "name": "FuelState",
+      "module": "tms",
+      "idl_line": 1931,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 1,
+      "ranges": 0
+    },
+    {
+      "name": "LoadStepResponse",
+      "module": "tms",
+      "idl_line": 1953,
+      "topics": [],
+      "fields": 12,
+      "keys": 0,
+      "optional": 0,
+      "units": 12,
+      "ranges": 0
+    },
+    {
+      "name": "LoadSharingInfo",
+      "module": "tms",
+      "idl_line": 2057,
+      "topics": [],
+      "fields": 12,
+      "keys": 0,
+      "optional": 2,
+      "units": 6,
+      "ranges": 0
+    },
+    {
+      "name": "StorageInfo",
+      "module": "tms",
+      "idl_line": 2151,
+      "topics": [],
+      "fields": 4,
+      "keys": 0,
+      "optional": 0,
+      "units": 1,
+      "ranges": 0
+    },
+    {
+      "name": "ControlHardwareInfo",
+      "module": "tms",
+      "idl_line": 2183,
+      "topics": [],
+      "fields": 4,
+      "keys": 0,
+      "optional": 0,
+      "units": 2,
+      "ranges": 1
+    },
+    {
+      "name": "ControlHardwareUpdate",
+      "module": "tms",
+      "idl_line": 2226,
+      "topics": [
+        "ControlHardwareUpdate"
+      ],
+      "fields": 7,
+      "keys": 1,
+      "optional": 4,
+      "units": 5,
+      "ranges": 4
+    },
+    {
+      "name": "PowerHardwareInfo",
+      "module": "tms",
+      "idl_line": 2305,
+      "topics": [],
+      "fields": 7,
+      "keys": 0,
+      "optional": 7,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerHardwareUpdate",
+      "module": "tms",
+      "idl_line": 2359,
+      "topics": [
+        "PowerHardwareUpdate"
+      ],
+      "fields": 8,
+      "keys": 1,
+      "optional": 6,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "DiagnosticTroubleCode",
+      "module": "tms",
+      "idl_line": 2416,
+      "topics": [],
+      "fields": 9,
+      "keys": 0,
+      "optional": 3,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ClockRealtime",
+      "module": "tms",
+      "idl_line": 2484,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ClockState",
+      "module": "tms",
+      "idl_line": 2528,
+      "topics": [
+        "ClockState"
+      ],
+      "fields": 6,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "DeviceConfigRequest",
+      "module": "tms",
+      "idl_line": 2575,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "DeviceRequest",
+      "module": "tms",
+      "idl_line": 2600,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerPortId",
+      "module": "tms",
+      "idl_line": 2620,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerConnectorInfo",
+      "module": "tms",
+      "idl_line": 2640,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerSwitchInfo",
+      "module": "tms",
+      "idl_line": 2665,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 1,
+      "ranges": 0
+    },
+    {
+      "name": "PowerPortInfo",
+      "module": "tms",
+      "idl_line": 2687,
+      "topics": [],
+      "fields": 16,
+      "keys": 0,
+      "optional": 3,
+      "units": 7,
+      "ranges": 0
+    },
+    {
+      "name": "PowerSwitchStatus",
+      "module": "tms",
+      "idl_line": 2829,
+      "topics": [],
+      "fields": 6,
+      "keys": 0,
+      "optional": 1,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "GroundingCircuitStatus",
+      "module": "tms",
+      "idl_line": 2870,
+      "topics": [],
+      "fields": 4,
+      "keys": 0,
+      "optional": 2,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "GroundingCircuitState",
+      "module": "tms",
+      "idl_line": 2914,
+      "topics": [
+        "GroundingCircuitState"
+      ],
+      "fields": 2,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "GroundingInfo",
+      "module": "tms",
+      "idl_line": 2935,
+      "topics": [],
+      "fields": 5,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ParameterMetadata",
+      "module": "tms",
+      "idl_line": 2983,
+      "topics": [],
+      "fields": 8,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 1
+    },
+    {
+      "name": "ParameterValue",
+      "module": "tms",
+      "idl_line": 3034,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerPortStatus",
+      "module": "tms",
+      "idl_line": 3074,
+      "topics": [],
+      "fields": 5,
+      "keys": 0,
+      "optional": 3,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "OperatorPriority",
+      "module": "tms",
+      "idl_line": 3122,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerPortIntent",
+      "module": "tms",
+      "idl_line": 3142,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerConnectionId",
+      "module": "tms",
+      "idl_line": 3167,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 1,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "SourceInfo",
+      "module": "tms",
+      "idl_line": 3188,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ActiveDiagnosticState",
+      "module": "tms",
+      "idl_line": 3215,
+      "topics": [
+        "ActiveDiagnosticState"
+      ],
+      "fields": 3,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "AuthorizationToEnergizeResult",
+      "module": "tms",
+      "idl_line": 3243,
+      "topics": [
+        "AuthorizationToEnergizeResult"
+      ],
+      "fields": 12,
+      "keys": 1,
+      "optional": 2,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "AuthorizationToEnergizeRequest",
+      "module": "tms",
+      "idl_line": 3318,
+      "topics": [
+        "AuthorizationToEnergizeRequest"
+      ],
+      "fields": 5,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "AuthorizationToEnergizeReply",
+      "module": "tms",
+      "idl_line": 3356,
+      "topics": [
+        "AuthorizationToEnergizeReply"
+      ],
+      "fields": 10,
+      "keys": 1,
+      "optional": 1,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "IdentityNicknameRequest",
+      "module": "tms",
+      "idl_line": 3420,
+      "topics": [
+        "IdentityNicknameRequest"
+      ],
+      "fields": 3,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "DeviceIcon",
+      "module": "tms",
+      "idl_line": 3448,
+      "topics": [
+        "DeviceIcon"
+      ],
+      "fields": 3,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "DeviceIntent",
+      "module": "tms",
+      "idl_line": 3474,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ControlParameterRequest",
+      "module": "tms",
+      "idl_line": 3511,
+      "topics": [
+        "ControlParameterRequest"
+      ],
+      "fields": 3,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ControlParameterState",
+      "module": "tms",
+      "idl_line": 3539,
+      "topics": [
+        "ControlParameterState"
+      ],
+      "fields": 3,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerPortState",
+      "module": "tms",
+      "idl_line": 3567,
+      "topics": [
+        "PowerPortState"
+      ],
+      "fields": 2,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "DistributionInfo",
+      "module": "tms",
+      "idl_line": 3588,
+      "topics": [],
+      "fields": 1,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "IdentityNicknameState",
+      "module": "tms",
+      "idl_line": 3605,
+      "topics": [
+        "IdentityNicknameState"
+      ],
+      "fields": 3,
+      "keys": 2,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "GroundingCircuitRequest",
+      "module": "tms",
+      "idl_line": 3634,
+      "topics": [
+        "GroundingCircuitRequest"
+      ],
+      "fields": 5,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "Heartbeat",
+      "module": "tms",
+      "idl_line": 3672,
+      "topics": [],
+      "fields": 2,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "LoadInfo",
+      "module": "tms",
+      "idl_line": 3693,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 2,
+      "ranges": 0
+    },
+    {
+      "name": "MetricParameterState",
+      "module": "tms",
+      "idl_line": 3724,
+      "topics": [
+        "MetricParameterState"
+      ],
+      "fields": 2,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "LoadSharingIntent",
+      "module": "tms",
+      "idl_line": 3745,
+      "topics": [],
+      "fields": 5,
+      "keys": 0,
+      "optional": 0,
+      "units": 3,
+      "ranges": 2
+    },
+    {
+      "name": "StorageIntent",
+      "module": "tms",
+      "idl_line": 3788,
+      "topics": [],
+      "fields": 5,
+      "keys": 0,
+      "optional": 0,
+      "units": 1,
+      "ranges": 1
+    },
+    {
+      "name": "MicrogridIntent",
+      "module": "tms",
+      "idl_line": 3826,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 1,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "OperatorIntent",
+      "module": "tms",
+      "idl_line": 3862,
+      "topics": [],
+      "fields": 5,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "OperatorIntentRequest",
+      "module": "tms",
+      "idl_line": 3899,
+      "topics": [
+        "OperatorIntentRequest"
+      ],
+      "fields": 3,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "OperatorIntentState",
+      "module": "tms",
+      "idl_line": 3927,
+      "topics": [
+        "OperatorIntentState"
+      ],
+      "fields": 2,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerPortConfigRequest",
+      "module": "tms",
+      "idl_line": 3948,
+      "topics": [],
+      "fields": 4,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerConnection",
+      "module": "tms",
+      "idl_line": 3978,
+      "topics": [],
+      "fields": 4,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 1
+    },
+    {
+      "name": "PowerConnectionState",
+      "module": "tms",
+      "idl_line": 4023,
+      "topics": [
+        "OperatorPowerConnectionState",
+        "DiscoveredPowerConnectionState",
+        "MicrogridPowerConnectionState"
+      ],
+      "fields": 2,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerSwitchCloseConditions",
+      "module": "tms",
+      "idl_line": 4044,
+      "topics": [],
+      "fields": 4,
+      "keys": 0,
+      "optional": 0,
+      "units": 4,
+      "ranges": 0
+    },
+    {
+      "name": "PowerSwitchRequest",
+      "module": "tms",
+      "idl_line": 4084,
+      "topics": [
+        "PowerSwitchRequest"
+      ],
+      "fields": 4,
+      "keys": 1,
+      "optional": 1,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "TopicInfo",
+      "module": "tms",
+      "idl_line": 4116,
+      "topics": [],
+      "fields": 5,
+      "keys": 0,
+      "optional": 1,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ActiveConversionInfo",
+      "module": "tms",
+      "idl_line": 4152,
+      "topics": [],
+      "fields": 1,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ConversionTapInfo",
+      "module": "tms",
+      "idl_line": 4167,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerPortConversionInfo",
+      "module": "tms",
+      "idl_line": 4202,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PassiveConversionInfo",
+      "module": "tms",
+      "idl_line": 4237,
+      "topics": [],
+      "fields": 1,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ConversionInfo",
+      "module": "tms",
+      "idl_line": 4252,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 2,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ProductInfo",
+      "module": "tms",
+      "idl_line": 4279,
+      "topics": [],
+      "fields": 8,
+      "keys": 0,
+      "optional": 1,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "MicrogridDashboardInfo",
+      "module": "tms",
+      "idl_line": 4330,
+      "topics": [],
+      "fields": 1,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "MicrogridControllerInfo",
+      "module": "tms",
+      "idl_line": 4345,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "ReplyStatus",
+      "module": "tms",
+      "idl_line": 4371,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "Reply",
+      "module": "tms",
+      "idl_line": 0,
+      "topics": [
+        "Reply"
+      ],
+      "fields": 6,
+      "keys": 2,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "EnergyStartStopRequest",
+      "module": "tms",
+      "idl_line": 4437,
+      "topics": [
+        "EnergyStartStopRequest"
+      ],
+      "fields": 5,
+      "keys": 1,
+      "optional": 1,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "EnergyStartStopState",
+      "module": "tms",
+      "idl_line": 4476,
+      "topics": [
+        "EnergyStartStopState"
+      ],
+      "fields": 9,
+      "keys": 1,
+      "optional": 1,
+      "units": 2,
+      "ranges": 0
+    },
+    {
+      "name": "ActiveMicrogridControllerState",
+      "module": "tms",
+      "idl_line": 4539,
+      "topics": [
+        "ActiveMicrogridControllerState"
+      ],
+      "fields": 2,
+      "keys": 1,
+      "optional": 1,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerLineMeasurement",
+      "module": "tms::ac",
+      "idl_line": 4573,
+      "topics": [],
+      "fields": 6,
+      "keys": 0,
+      "optional": 1,
+      "units": 6,
+      "ranges": 1
+    },
+    {
+      "name": "PowerPortMeasurement",
+      "module": "tms::ac",
+      "idl_line": 4643,
+      "topics": [],
+      "fields": 5,
+      "keys": 0,
+      "optional": 0,
+      "units": 3,
+      "ranges": 0
+    },
+    {
+      "name": "MeasurementUpdate",
+      "module": "tms::ac",
+      "idl_line": 4697,
+      "topics": [
+        "AcMeasurementUpdate",
+        "AcSummaryMeasurementUpdate"
+      ],
+      "fields": 4,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "LoadSharingParameters",
+      "module": "tms::ac",
+      "idl_line": 4728,
+      "topics": [],
+      "fields": 11,
+      "keys": 0,
+      "optional": 0,
+      "units": 10,
+      "ranges": 0
+    },
+    {
+      "name": "LoadSharingRequest",
+      "module": "tms::ac",
+      "idl_line": 4825,
+      "topics": [
+        "AcLoadSharingRequest"
+      ],
+      "fields": 3,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "LoadSharingState",
+      "module": "tms::ac",
+      "idl_line": 4853,
+      "topics": [
+        "AcLoadSharingState"
+      ],
+      "fields": 3,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerLineMeasurement",
+      "module": "tms::dc",
+      "idl_line": 4882,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 3,
+      "ranges": 0
+    },
+    {
+      "name": "PowerPortMeasurement",
+      "module": "tms::dc",
+      "idl_line": 4923,
+      "topics": [],
+      "fields": 3,
+      "keys": 0,
+      "optional": 0,
+      "units": 1,
+      "ranges": 0
+    },
+    {
+      "name": "MeasurementUpdate",
+      "module": "tms::dc",
+      "idl_line": 4963,
+      "topics": [
+        "DcMeasurementUpdate",
+        "DcSummaryMeasurementUpdate"
+      ],
+      "fields": 4,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "LoadSharingParameters",
+      "module": "tms::dc",
+      "idl_line": 4994,
+      "topics": [],
+      "fields": 6,
+      "keys": 0,
+      "optional": 0,
+      "units": 5,
+      "ranges": 0
+    },
+    {
+      "name": "LoadSharingRequest",
+      "module": "tms::dc",
+      "idl_line": 5056,
+      "topics": [
+        "DcLoadSharingRequest"
+      ],
+      "fields": 3,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "LoadSharingState",
+      "module": "tms::dc",
+      "idl_line": 5084,
+      "topics": [],
+      "fields": 3,
+      "keys": 1,
+      "optional": 0,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "StorageUpdate",
+      "module": "tms",
+      "idl_line": 5113,
+      "topics": [
+        "StorageUpdate"
+      ],
+      "fields": 11,
+      "keys": 1,
+      "optional": 3,
+      "units": 9,
+      "ranges": 3
+    },
+    {
+      "name": "ControlServiceInfo",
+      "module": "tms",
+      "idl_line": 5212,
+      "topics": [],
+      "fields": 2,
+      "keys": 0,
+      "optional": 2,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "PowerDeviceInfo",
+      "module": "tms",
+      "idl_line": 5234,
+      "topics": [],
+      "fields": 7,
+      "keys": 0,
+      "optional": 5,
+      "units": 0,
+      "ranges": 0
+    },
+    {
+      "name": "DeviceInfo",
+      "module": "tms",
+      "idl_line": 5286,
+      "topics": [
+        "DeviceInfo"
+      ],
+      "fields": 10,
+      "keys": 1,
+      "optional": 6,
+      "units": 0,
+      "ranges": 0
+    }
+  ]
+}

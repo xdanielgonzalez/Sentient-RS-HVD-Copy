@@ -1,0 +1,125 @@
+name: _security (reusable)
+
+# Reusable workflow: the security seam's FIPS x TrustZone x secure-element feature/tier matrix.
+# Split out of _test so the security tests are their own CI branch (logic tests / security tests /
+# boot tests / coverage are separate concerns). Called only via `workflow_call`, gated on the lint
+# stage by ci.yml.
+
+# No secrets: the shared setup action only wires the NFS-backed sccache env (no MinIO cache
+# creds needed since the S3 target/ cache was dropped — see .github/actions/setup).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  security-matrix:
+    name: lib-security tier matrix (9 combinations, single job)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    # Collapsed from 9 separate matrix jobs into 1 (measured from run 30207733335: 9 jobs / 239s
+    # total compute, individually 48s/47s/29s/26s/22s/18s/18s/16s/15s). Each of those jobs paid a
+    # full checkout + container pull + Setup for often under 20s of actual work — 9 runner slots
+    # tied up for ~4 minutes of work on a 2-node ARC pool, which is what turns ordinary contention
+    # into a 142-227 minute queue. Looping the 9 tiers inside one job's single step keeps the same
+    # total compute (roughly; 8 fewer checkouts/setups if anything) but needs only 1 runner slot
+    # instead of 9 — the win is queue/slot pressure, not CPU time. 20 minutes covers the ~4 minute
+    # sum with ample headroom (was already the per-job timeout for the biggest single tier).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      # clippy is baked into sentient-builder — no rust-components needed.
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # Prove out every buildable tier of the security seam: each FIPS x TrustZone x secure-element
+      # combination must compile and pass the rstest matrix (identity/session per-purpose custody,
+      # weakest-wins tier_slug/custody_warning — see lib-security/tests/matrix.rs). `wolfcrypt` is
+      # excluded — it needs a system wolfSSL 5.9.0+ to link (a separate build ledger; see
+      # docs/wolfcrypt-backend.md).
+      #
+      # Was a `strategy.matrix` with `fail-fast: false` (9 independent jobs, every failure visible
+      # in the GitHub UI). Collapsed to one job looping over the same 9 entries in a single step.
+      # `fail-fast: false` semantics are preserved by hand: the loop does NOT abort on the first
+      # failing tier (no `set -e` across iterations) — every combination runs regardless of earlier
+      # failures, failures are collected, and the step exits non-zero at the end iff any tier
+      # failed. Per-combination visibility (which tier failed, at a glance) is preserved via a
+      # pass/fail/duration table written to $GITHUB_STEP_SUMMARY, matching the style of
+      # `_quality.yml`'s coverage summary / `_test.yml`'s junit summary.
+      - name: Test / build all security tiers
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Row order mirrors the old `strategy.matrix.include` list and `justfile`'s `sec-matrix`
+          # recipe (empty string = no_std core, handled by the distinct `sec-no-std` code path
+          # below since those tests need `std` to run).
+          #
+          # Kept in sync with `justfile`'s `sec-matrix` recipe by `.ci/scripts/sec_matrix_audit.py`
+          # (`just lint` / `just sec-matrix-drift`) — edit BOTH, or the drift gate fails. The
+          # workflow cannot just call `sec-matrix`: just's dependency mechanism aborts on the first
+          # failure, which would discard the all-failures reporting the loop below preserves.
+          declare -a TIERS=(
+            "std,software"                        # default host tier (standard + software)
+            "fips,std"                             # FIPS module tier
+            "trustzone,std"                        # session custody -> secure-world
+            "fips,trustzone,std"                   # both toggles
+            "secure-element,std"                   # identity custody -> secure element (session stays software)
+            "fips,secure-element,std"               # FIPS + secure-element
+            "secure-element,trustzone,std"          # secure-element (identity) + trustzone (session) -- mixed, both hardware
+            "fips,secure-element,trustzone,std"     # all three toggles
+            ""                                     # no_std core (build only; not runnable on target)
+          )
+
+          declare -a RESULTS=()
+          declare -a DURATIONS=()
+          ANY_FAILED=0
+
+          for features in "${TIERS[@]}"; do
+            label="${features:-no_std-core}"
+            echo "::group::security tier: ${label}"
+            SECONDS=0
+            if [ -z "${features}" ]; then
+              # no_std core: no std feature -> build for the MCU target (tests need std to run).
+              just sec-no-std
+            else
+              just sec-tier "${features}"
+            fi
+            status=$?
+            elapsed=$SECONDS
+            echo "::endgroup::"
+
+            DURATIONS+=("${elapsed}")
+            if [ "${status}" -eq 0 ]; then
+              RESULTS+=("pass")
+              echo "PASS (${elapsed}s): ${label}"
+            else
+              RESULTS+=("fail")
+              ANY_FAILED=1
+              echo "FAIL (${elapsed}s): ${label}"
+            fi
+          done
+
+          {
+            echo "## lib-security tier matrix results"
+            echo
+            echo "| tier | status | duration |"
+            echo "| --- | --- | --- |"
+            for i in "${!TIERS[@]}"; do
+              label="${TIERS[$i]:-no_std-core}"
+              if [ "${RESULTS[$i]}" = "pass" ]; then
+                echo "| \`${label}\` | pass | ${DURATIONS[$i]}s |"
+              else
+                echo "| \`${label}\` | **FAIL** | ${DURATIONS[$i]}s |"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "${ANY_FAILED}"

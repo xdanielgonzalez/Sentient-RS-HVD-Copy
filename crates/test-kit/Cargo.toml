@@ -1,0 +1,90 @@
+[package]
+publish = false            # test-support only — never published, never a runtime dependency
+name = "test-kit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Consolidated test-support crate for sentient-rs (#99): LoopbackBridge (two-stack in-memory WireFrame bridge, formerly sentient-net-testkit), SeplosSim (the pure Seplos v2 device simulator, formerly seplos-sim), and the lib-mqtt broker test helpers + FakeTokenVerifier (formerly lib-mqtt/tests/support). A dev-dependency of lib-link, lib-mqtt, and test-e2e only — never linked into any shipping binary or the no_std MCU build."
+
+[dependencies]
+# --- bridge module (formerly sentient-net-testkit) ---
+# lib-net: `channel` (WireFrame boundary, always-on) + `link` (ChannelDevice/NetStack) + `tls`
+# (the tls module reuses `link::tls`/`link::tls_identity`). `tls` implies `link` + `std`.
+lib-net = { workspace = true, features = ["tls"] }
+
+# --- seplos + voltronic sim modules (formerly seplos-sim) ---
+heapless = { workspace = true }
+# Decode-side reuse only: the frame/checksum encoders are the single authoritative implementation,
+# reused here (never re-derived) so the sim and the real decoder can never silently drift apart.
+# `voltronic` adds the CRC-16/XMODEM used by `VoltronicSim`'s frame builder (D13).
+lib-parse = { workspace = true, default-features = false, features = ["seplos", "voltronic"] }
+
+# --- mqtt module (formerly lib-mqtt/tests/support) ---
+lib-mqtt = { workspace = true }
+# `default-features = true` pulls in the `std` feature (host-only) — this crate is host/std-only
+# test-support, matching lib-mqtt's own posture.
+lib-security = { workspace = true, default-features = true }
+
+# --- dds-probe bin (WP5 #323: Rust-side DDS probe over the real lib-dds seam) ---
+# Optional, mirroring `tcp-sim`: only pulled in behind the `dds-probe` feature. `lib-dds` is
+# Pi-only/std (never no_std/MCU — see its own crate doc), matching this crate's existing tcp-sim
+# posture. `tokio` backs the participant's subscribe channel + `#[tokio::main]`; the workspace-level
+# dependency already carries `features = ["full"]`, so no extra features are needed here. A `[[bin]]`
+# can't draw on `[dev-dependencies]`, so `tokio` is pulled as a normal optional dep here, gated by
+# the same feature — it never affects the default (no-`dds-probe`) build of this crate.
+lib-dds = { workspace = true, optional = true }
+# `lib_tms::cdr` (the CDR chain machinery) + the generated identity-topic types — this crate already
+# pulls `lib-parse` unconditionally, but not `lib-tms`; `std` is on so `Identity`/heapless etc. are
+# the same host-side shapes the rest of the workspace uses (no_std is the MCU posture, irrelevant here).
+lib-tms = { workspace = true, optional = true, default-features = true }
+tokio = { workspace = true, optional = true }
+
+# --- tcp-sim bin (seplos-tcp-sim + golden fixture generator) ---
+# Optional: only pulled in behind the `tcp-sim` feature so the default (no_std-friendly) build of
+# this crate is unaffected. `lib-parse` above is already a hard dependency (decode-side reuse for
+# the pure sim), so it does not need its own optional entry here.
+lib-mapping = { workspace = true, default-features = true, optional = true }
+# Only needed directly for the `T: serde::Serialize` bound on the fixture writer; the actual JSON
+# encoding is done by `lib_mapping::codec::to_json_slice`, never re-implemented here.
+serde = { workspace = true, optional = true }
+
+# --- tls module: ephemeral self-signed identity generation for TLS bring-up/tests (#TLS key
+# removal) --- replaces the formerly-committed `lib-link/certs/bringup_{cert,key}.der` private key
+# (see docs/security.md's rotation note): each test process now generates its own identity, never
+# stored. A normal (non-optional, non-dev) dependency of THIS crate — never of `lib-link` itself —
+# so `rcgen` cannot enter `bin/zephyr`'s Cargo.lock (this crate is never in that graph). `ring`
+# backend (not the 0.13 default `aws_lc_rs`) to match the `ring` provider `rustls` already uses
+# elsewhere in the workspace — keeps exactly one TLS crypto backend in the dependency graph.
+rcgen = { workspace = true }
+
+[features]
+tcp-sim = ["dep:lib-mapping", "dep:serde"]
+# WP5 (#323): the Rust-side DDS probe — subscribe/publish/dump-fixtures over the real `lib-dds`
+# seam (mirrors `tcp-sim`'s split: optional, so the default no_std-friendly build of this crate is
+# unaffected). The HEAVY interop asserting lives in the python `deploy/dds-probe/subscribe_assert.py`
+# CycloneDDS probe, NOT here — see `crates/lib-dds/src/lib.rs` + `src/dds/mod.rs`'s doc comment.
+dds-probe = ["dep:lib-dds", "dep:lib-tms", "dep:tokio"]
+
+[[bin]]
+name = "seplos-tcp-sim"
+path = "src/bin/seplos_tcp_sim/main.rs"
+required-features = ["tcp-sim"]
+
+[[bin]]
+name = "dds-probe"
+path = "src/bin/dds_probe/main.rs"
+required-features = ["dds-probe"]
+
+[dev-dependencies]
+# Two-stack loopback unit test for the bridge module (mirrors the original sentient-net-testkit
+# crate's own test).
+smoltcp = { workspace = true, default-features = false, features = [
+    "medium-ethernet",
+    "proto-ipv4",
+    "socket-tcp",
+] }
+
+[lints]
+workspace = true

@@ -1,0 +1,92 @@
+# TMS IDL codegen — the tiny honest hand layer.
+#
+# Everything derivable from the IDL is derived. This file holds ONLY what the IDL cannot express:
+# the SRAM-budget bound narrowings, the MCU encoder subset, and the canonical->TMS value bindings
+# for the flat encoders (domain mapping logic that lives in no standard, by definition).
+
+# ---------------------------------------------------------------------------------------------
+# [bounds] — SRAM-budget narrowings, applied by IDL CONST NAME.
+#
+# Every sequence/string bound in the IDL resolves through a `const` (e.g. a typedef
+# `sequence<T, PowerPortInfoSequence_MAXLEN>` where `PowerPortInfoSequence_MAXLEN = MAX_PORTS = 64`).
+# Overriding the const value narrows EVERY sequence bound by it — which is exactly how the golden
+# hand-written types narrowed (MAX_PORTS 64 -> 4 everywhere a port sequence appears, etc.). These 7
+# const overrides reproduce all 16 distinct golden field/alias narrowings. Bounds NOT listed keep
+# their IDL value (e.g. MAX_DTC = 64 and MAX_STORAGE_CELLS = 50 are unchanged, matching golden).
+[bounds]
+MAX_PORTS = 4                        # 64 -> 4   (all *Port* / *PortMeasurement* / port-number seqs)
+MAX_GROUNDING_CIRCUITS = 2           # 8  -> 2   (PowerDeviceInfo.grounds)
+MAX_TAPS = 4                         # 64 -> 4   (PowerPortConversionInfo.conversion_taps)
+ParameterMetadataSequence_MAXLEN = 8 # 128 -> 8  (DeviceInfo.control_parameters / metric_parameters)
+EnumLabelSequence_MAXLEN = 8         # 128 -> 8  (ParameterMetadata.enum_labels)
+LoadStepResponseSequence_MAXLEN = 2  # 16 -> 2   (LoadSharingInfo.load_response)
+TopicList_MAXLEN = 16                # 64 -> 16  (TopicInfo.* topic lists)
+
+# ---------------------------------------------------------------------------------------------
+# [subset] — which @topic roots get a flat MCU encoder emitted (transitive closure of referenced
+# types is computed automatically). The registry ALWAYS contains the full IDL model; this list only
+# selects the constrained-hot-path products. These are the three topics a Seplos frame maps to,
+# whose golden hand-written serializers are the byte-identity oracle.
+[subset]
+mcu_encoder_topics = ["DcMeasurementUpdate", "PowerHardwareUpdate", "ActiveDiagnosticState"]
+# chain_topics — the @topic roots whose field CHAINS (Src accessor traits + Field ZSTs + Chain node
+# lists) are emitted into lib-tms/src/generated_fields.rs (transitive closure of referenced struct
+# types is computed automatically; enums emit via wire_str() and need no module). The set is every
+# TMS type bin-rpi serializes via to_json_slice: the Seplos/inverter telemetry topics, the D13
+# Heartbeat/DeviceInfo/Reply task publishes, and the state-publisher retained STOR set.
+chain_topics = [
+    "DcMeasurementUpdate", "PowerHardwareUpdate", "ActiveDiagnosticState",
+    "AcMeasurementUpdate", "StorageUpdate", "DeviceInfo", "Reply", "Heartbeat",
+    "PowerPortState", "EnergyStartStopState", "DcLoadSharingState",
+    "ActiveMicrogridControllerState",
+]
+# cdr_topics — the @topic roots whose XCDR2 CDR chains (<T>CdrSrc accessor traits + CdrField ZSTs +
+# CdrChain node lists) are emitted into lib-tms/src/generated_cdr.rs (transitive closure computed
+# automatically). This is the DDS transport's wire subset: ALL published topics (== chain_topics)
+# PLUS the two request types the request->Reply path decodes (EnergyStartStopRequest,
+# PowerSwitchRequest).
+cdr_topics = [
+    "DcMeasurementUpdate", "PowerHardwareUpdate", "ActiveDiagnosticState",
+    "AcMeasurementUpdate", "StorageUpdate", "DeviceInfo", "Reply", "Heartbeat",
+    "PowerPortState", "EnergyStartStopState", "DcLoadSharingState",
+    "ActiveMicrogridControllerState",
+    "EnergyStartStopRequest", "PowerSwitchRequest",
+]
+
+# ---------------------------------------------------------------------------------------------
+# [typedefs] — the KEPT primitive typedefs emitted into lib-tms as named `pub type` aliases.
+#
+# Only the SELECTION is hand-authored; each alias's RHS is resolved from the IDL (so it can't drift).
+# These are exactly the typedefs the golden hand-written schema exposed as named public aliases — the
+# standard's primitive typedefs that consumers import by name (`lib_tms::Identity`, `lib_tms::String32`, …). The
+# IDL's other ~50 typedefs are `*Sequence` helpers golden inlined at each use and never named, so they
+# are NOT listed here (emitting all would also duplicate the ac/dc `PowerLineMeasurementSequence`).
+[typedefs]
+emit = [
+    "Identity", "String32", "String16", "String1_32",
+    "PowerPortNumber", "StorageCellNumber", "SuspectParameterNumber",
+    "TapNumber", "GroundingCircuitNumber",
+    "TopicList", "EnumLabelSequence", "ThermalZoneSequence",
+]
+
+# ---------------------------------------------------------------------------------------------
+# [variant_idents] — full IDL enumerator (wire spelling) -> Rust variant IDENT.
+#
+# For the handful of golden variant names that are hand-curated SEMANTIC labels, NOT a mechanical
+# de-prefix of the wire token (the J1939 FMI "above/below normal" naming; golden's CamelCase of the
+# `AC_3WYE`-style wiring tokens; golden's correction of the preserved IDL typo CHARGE->Change in the
+# IDENT only). The `#[serde(rename)]` (the wire token, left column) is UNCHANGED — this touches only
+# the Rust identifier — so wire bytes are byte-identical. Reproduces golden's exact spelling so
+# consumer call sites (`FailureModeIndicator::AboveNormalMostSevere`, …) do NOT churn.
+[variant_idents]
+FMI_HIGH_MOST_SEVERE_HIGH = "AboveNormalMostSevere"
+FMI_HIGH_MOST_SEVERE_LOW = "BelowNormalMostSevere"
+FMI_HIGH_LEAST_SEVERE = "AboveNormalLeastSevere"
+FMI_HIGH_MODERATELY_SEVERE = "AboveNormalModeratelySevere"
+FMI_LOW_LEAST_SEVERE = "BelowNormalLeastSevere"
+FMI_LOW_MODERATELY_SEVERE = "BelowNormalModeratelySevere"
+FMI_ABNORMAL_RATE_OF_CHARGE = "AbnormalRateOfChange"
+WIRING_AC_3WYE = "Ac3Wye"
+WIRING_AC_3DELTA = "Ac3Delta"
+WIRING_DC_3WIRE = "Dc3Wire"
+

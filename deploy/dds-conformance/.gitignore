@@ -1,0 +1,2 @@
+# Runtime output of run_conformance.sh (mounted ./artifacts:/out in compose.yaml).
+artifacts/

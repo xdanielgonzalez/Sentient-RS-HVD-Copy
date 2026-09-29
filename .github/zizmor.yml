@@ -1,0 +1,61 @@
+# zizmor config. Three findings are deliberately accepted for this controlled, internal ARC setup;
+# every other zizmor rule still gates the workflows.
+#
+# unpinned-images  — base images are rust:latest / rust:1.91 pulled through the internal Harbor
+#                    proxy on ephemeral ARC pods; digest-pinning every base image fights the
+#                    rust:latest workflow and the Harbor cache. Intentional.
+# artipacked       — checkout persists the token in the runner's git config; the pods are ephemeral
+#                    and first-party, and private-dep fetch relies on the explicit credential-store
+#                    step in the composite setup. Low risk here.
+# secrets-inherit  — the orchestrator passes `secrets: inherit` to first-party reusable workflows in
+#                    THIS repo only. Acceptable for internal reuse.
+rules:
+  unpinned-images:
+    ignore:
+      - _lint.yml
+      - _test.yml
+      - _security.yml
+      - _supply-chain.yml
+      - _quality.yml
+      - _release-build.yml
+      - _release-publish.yml
+      - _release-sysext.yml
+      - _uat-qemu.yml
+      - scheduled.yml
+      - production.yml
+      - wolfcrypt.yml
+      - _yocto.yml
+      - uat.yml
+      - builder-image.yml
+      # Same accepted pattern: rust:1.91 through the Harbor Docker Hub mirror on an ephemeral pod.
+      - claude-pr-review.yml
+  artipacked:
+    ignore:
+      # branch-cleanup keeps checkout credentials ON PURPOSE — the cleanup script git-fetches all
+      # branch tips over the persisted token.
+      - branch-cleanup.yml
+      - _lint.yml
+      - _test.yml
+      - _dds_interop.yml
+      - _security.yml
+      - _supply-chain.yml
+      - _quality.yml
+      - _release-build.yml
+      - _release-publish.yml
+      - _release-sysext.yml
+      - _uat-qemu.yml
+      - scheduled.yml
+      - production.yml
+      - wolfcrypt.yml
+      - _yocto.yml
+      - uat.yml
+      - builder-image.yml
+  secrets-inherit:
+    ignore:
+      - ci.yml
+      - image.yml
+      - production.yml
+      - uat.yml
+      # Same orchestrator role as uat.yml — it was uat.yml's `viz-uat` job until the
+      # delivery/deployment split (#377) moved it into its own workflow.
+      - viz-deploy.yml

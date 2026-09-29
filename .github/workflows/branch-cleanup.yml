@@ -1,0 +1,55 @@
+name: Branch Cleanup
+
+# Daily (24h) stale-branch cleanup — the routine IS CODE (.ci/scripts/stale-branch-cleanup.sh),
+# not an agent prompt, so every run applies exactly the same rules:
+#   1. Candidates: branches whose associated PR(s) are ALL closed and whose tip predates today
+#      (00:00 UTC).
+#   2. Candidates ≥48h since the last commit are deleted.
+#   3. Candidates younger than 48h (or with recent pushes) are left in place.
+#   4. A summary of deletions lands in the run's step summary; "no branches deleted" is stated
+#      briefly when nothing qualified.
+# Safety: the default branch, protected branches, and branches that never had a PR are never
+# touched; every deleted branch had a closed PR, so it is restorable in one click from that PR's
+# page ("Restore branch").
+#
+# Runs on a GitHub-hosted runner (gh + git preinstalled, same as promote.yml) — no ARC container
+# needed for a pure API job. NOTE: `schedule:` only fires from the default branch, so this
+# workflow becomes active once merged to main. Dispatch with dry_run=true to rehearse a run.
+
+on:
+  schedule:
+    - cron: '30 5 * * *'   # daily, 05:30 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report what would be deleted without deleting anything.
+        type: boolean
+        required: false
+        default: false
+
+# Never let two cleanup passes race each other (a slow API day + the next day's tick).
+concurrency:
+  group: branch-cleanup
+  cancel-in-progress: false
+
+permissions:
+  contents: write        # delete refs
+  pull-requests: read    # branch -> PR association
+
+jobs:
+  cleanup:
+    name: delete stale branches
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: true   # the script git-fetches all branch tips (blobless)
+
+      - name: Run stale-branch cleanup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          # Scheduled runs delete for real; a dispatch deletes unless dry_run was checked.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+        run: .ci/scripts/stale-branch-cleanup.sh

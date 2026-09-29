@@ -1,0 +1,1524 @@
+{
+  "catalog": {
+    "uuid": "34308414-dd16-4ffd-a05e-a1142c2d078a",
+    "metadata": {
+      "title": "MIL-STD-3071 TMS Data Model \u2014 Topic Conformance Catalog (custom)",
+      "last-modified": "2026-07-17T01:05:50Z",
+      "version": "1.0.0",
+      "oscal-version": "1.2.1",
+      "links": [
+        {
+          "href": "#17832bbc-ca42-4096-a9c6-91468057d2ef",
+          "rel": "reference",
+          "text": "MIL-STD-3071 Change 2, Appendix D (source PDF)"
+        },
+        {
+          "href": "#51263f7a-b328-41d9-aaf2-4072c0004491",
+          "rel": "reference",
+          "text": "MIL-STD-3071 TMS Data Model IDL v2.0.2 (checked-in ground truth)"
+        },
+        {
+          "href": "#fe8bebe9-1ea5-4d4b-9814-d1019be8c7e3",
+          "rel": "evidence",
+          "text": "tms-coverage.json (generated type-catalogue coverage)"
+        }
+      ],
+      "remarks": "CUSTOM (non-NIST) OSCAL catalog. Controls are derived from MIL-STD-3071's A.8.7 Topic Usage classification (Required / Conditional-on-10-named-conditions / Optional) and Tables B.1/B.2 (pp.64-65), plus cross-cutting requirements from D.4 (IDL annotations)/D.5 (QoS) and A.8.6 (topic naming). Per MIL-STD-3071 \u00a71.5 (p.1): \"This document does not define test procedures that verify compliance with this standard\" \u2014 no attestation/report format is prescribed anywhere in the standard, so this catalog and its assessment format are a project-defined conformance framework, not a certified DDS conformance test. Optional-usage topics (18 of the 37 topic bindings in tms-coverage.json) are intentionally NOT modeled as controls here \u2014 A.8.7 defines them as never mandatory.",
+      "parties": [
+        {
+          "uuid": "6fc9b177-efce-4f8c-92ac-71159f66ad1d",
+          "type": "organization",
+          "name": "HVD / sentient-rs",
+          "remarks": "Authoring organization for this custom catalog."
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "required-topics",
+        "title": "Required Topics (MIL-STD-3071 Table B.2 / A.8.7)",
+        "props": [
+          {
+            "name": "count",
+            "value": "8"
+          }
+        ],
+        "parts": [
+          {
+            "name": "overview",
+            "prose": "\"Required. Implemented by all TMS devices\" (A.8.7, p.44). Every TMS device \u2014 regardless of role \u2014 SHALL implement these 8 topics."
+          }
+        ],
+        "controls": [
+          {
+            "id": "tms-topic-heartbeat",
+            "title": "Heartbeat (topic, Required)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "Heartbeat"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "tms-type",
+                "value": "Heartbeat"
+              },
+              {
+                "name": "idl-line",
+                "value": "3672"
+              },
+              {
+                "name": "section",
+                "value": "B.4.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "Medium (Periodic 1 s, 3 s deadline)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 3672 (Heartbeat)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.4.1"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "The device SHALL publish Heartbeat at a 1 s period so subscribers can detect loss of on-bus liveness, independent of any other topic's cadence."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `Heartbeat` to type `Heartbeat` (idl_line 3672). Section B.4.1. QoS profile: Medium (Periodic 1 s, 3 s deadline)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-device-info",
+            "title": "DeviceInfo (topic, Required)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "DeviceInfo"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "tms-type",
+                "value": "DeviceInfo"
+              },
+              {
+                "name": "idl-line",
+                "value": "5286"
+              },
+              {
+                "name": "section",
+                "value": "B.5.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "PublishLast (At Start, TRANSIENT_LOCAL/RELIABLE)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 5286 (DeviceInfo)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.5.1"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "The device SHALL publish DeviceInfo at start-up (and make it available to late-joining subscribers via TRANSIENT_LOCAL durability) declaring its role, product identity, and the TopicInfo describing which conditional/optional topics and request topics it implements."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `DeviceInfo` to type `DeviceInfo` (idl_line 5286). Section B.5.1. QoS profile: PublishLast (At Start, TRANSIENT_LOCAL/RELIABLE)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-active-diagnostic-state",
+            "title": "ActiveDiagnosticState (topic, Required)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "ActiveDiagnosticState"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "tms-type",
+                "value": "ActiveDiagnosticState"
+              },
+              {
+                "name": "idl-line",
+                "value": "3215"
+              },
+              {
+                "name": "section",
+                "value": "B.12.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "PublishLast (At Start, On Change)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 3215 (ActiveDiagnosticState)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.12.1"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "The device SHALL publish ActiveDiagnosticState at start-up and on any change to its set of active diagnostic trouble codes, most-severe-first truncated at 64 entries with an overflow count for any codes beyond that."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `ActiveDiagnosticState` to type `ActiveDiagnosticState` (idl_line 3215). Section B.12.1. QoS profile: PublishLast (At Start, On Change)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-active-microgrid-controller-state",
+            "title": "ActiveMicrogridControllerState (topic, Required)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "ActiveMicrogridControllerState"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "tms-type",
+                "value": "ActiveMicrogridControllerState"
+              },
+              {
+                "name": "idl-line",
+                "value": "4539"
+              },
+              {
+                "name": "section",
+                "value": "B.13.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "PublishLast (At Start, On Change)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 4539 (ActiveMicrogridControllerState)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.13.1"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "The device SHALL publish ActiveMicrogridControllerState at start-up and on every change of which Microgrid Controller (if any) it currently recognizes as active, per the MC-selection state machine (A.7.5)."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `ActiveMicrogridControllerState` to type `ActiveMicrogridControllerState` (idl_line 4539). Section B.13.1. QoS profile: PublishLast (At Start, On Change)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-energy-start-stop-state",
+            "title": "EnergyStartStopState (topic, Required)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "EnergyStartStopState"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "tms-type",
+                "value": "EnergyStartStopState"
+              },
+              {
+                "name": "idl-line",
+                "value": "4476"
+              },
+              {
+                "name": "section",
+                "value": "B.16.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "PublishLast (At Start, On Change)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 4476 (EnergyStartStopState)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.16.1"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "The device SHALL publish EnergyStartStopState (present/future start-stop level, lock, elapsed/remaining time, reason, actor) at start-up and on any level change."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `EnergyStartStopState` to type `EnergyStartStopState` (idl_line 4476). Section B.16.1. QoS profile: PublishLast (At Start, On Change)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-power-port-state",
+            "title": "PowerPortState (topic, Required)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "PowerPortState"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "tms-type",
+                "value": "PowerPortState"
+              },
+              {
+                "name": "idl-line",
+                "value": "3567"
+              },
+              {
+                "name": "section",
+                "value": "B.17.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "PublishLast (At Start, On Change)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 3567 (PowerPortState)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.17.1"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "The device SHALL publish PowerPortState (per-port cable/connection/switch status) at start-up and on any change, for every power port it exposes."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `PowerPortState` to type `PowerPortState` (idl_line 3567). Section B.17.1. QoS profile: PublishLast (At Start, On Change)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-reply",
+            "title": "Reply (topic, Required)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "Reply"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "tms-type",
+                "value": "Reply"
+              },
+              {
+                "name": "idl-line",
+                "value": "4393"
+              },
+              {
+                "name": "section",
+                "value": "B.22.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "Reply (Reliable, history 128, within 0.1 s of a Request)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 4393 (Reply)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.22.1"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "The device SHALL publish a Reply within 0.1 s of receiving any Request-pattern topic it subscribes to, keyed on requestingDeviceId/targetDeviceId, carrying a ReplyStatus."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `Reply` to type `Reply` (idl_line 4393). Section B.22.1. QoS profile: Reply (Reliable, history 128, within 0.1 s of a Request)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-storage-update",
+            "title": "StorageUpdate (topic, Required)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "StorageUpdate"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "tms-type",
+                "value": "StorageUpdate"
+              },
+              {
+                "name": "idl-line",
+                "value": "5113"
+              },
+              {
+                "name": "section",
+                "value": "B.10.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "Slow (Periodic 10 s, 20 s deadline)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 5113 (StorageUpdate)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.10.1"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device with an energy-storage subsystem (STOR role) SHALL publish StorageUpdate at a 10 s period carrying internalVoltage/stateOfCharge/availableEnergy and charge/discharge curves."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `StorageUpdate` to type `StorageUpdate` (idl_line 5113). Section B.10.1. QoS profile: Slow (Periodic 10 s, 20 s deadline)."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "conditional-topics",
+        "title": "Conditional Topics (MIL-STD-3071 Table B.2 / A.8.7, 10 named conditions)",
+        "props": [
+          {
+            "name": "count",
+            "value": "11"
+          }
+        ],
+        "parts": [
+          {
+            "name": "overview",
+            "prose": "\"Conditional. Implemented by TMS devices that meet the specified condition\" (A.8.7, p.44). \"Every device publishes which conditional and optional topics it implements in the device announcement TopicInfo\" (A.8.7, p.45)."
+          }
+        ],
+        "controls": [
+          {
+            "id": "tms-topic-ac-load-sharing-state",
+            "title": "AcLoadSharingState (topic, Conditional)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "AcLoadSharingState"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "condition",
+                "value": "HAS AC PORTS"
+              },
+              {
+                "name": "tms-type",
+                "value": "tms::ac::AcLoadSharingState"
+              },
+              {
+                "name": "idl-line",
+                "value": "4853"
+              },
+              {
+                "name": "section",
+                "value": "B.21.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "PublishLast (At Start, On Change)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 4853 (tms::ac::AcLoadSharingState)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.21.1 / A.8.7 condition HAS AC PORTS"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device with any AC-wired power port SHALL publish AcLoadSharingState describing its current AC load-sharing participation."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `AcLoadSharingState` to type `tms::ac::AcLoadSharingState` (idl_line 4853). Section B.21.1. QoS profile: PublishLast (At Start, On Change). Conditional on: HAS AC PORTS (A.8.7, one of the 10 named conditions)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-ac-measurement-update",
+            "title": "AcMeasurementUpdate (topic, Conditional)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "AcMeasurementUpdate"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "condition",
+                "value": "HAS AC METERS"
+              },
+              {
+                "name": "tms-type",
+                "value": "tms::ac::AcMeasurementUpdate"
+              },
+              {
+                "name": "idl-line",
+                "value": "4697"
+              },
+              {
+                "name": "section",
+                "value": "B.18.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "Medium (Periodic 1 s, 3 s deadline)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 4697 (tms::ac::AcMeasurementUpdate)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.18.1 / A.8.7 condition HAS AC METERS"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device with an AC port carrying hasExternalMeter or hasInternalMeter SHALL publish AcMeasurementUpdate at a 1 s period for that port's measurements."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `AcMeasurementUpdate` to type `tms::ac::AcMeasurementUpdate` (idl_line 4697). Section B.18.1. QoS profile: Medium (Periodic 1 s, 3 s deadline). Conditional on: HAS AC METERS (A.8.7, one of the 10 named conditions)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-ac-summary-measurement-update",
+            "title": "AcSummaryMeasurementUpdate (topic, Conditional)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "AcSummaryMeasurementUpdate"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "condition",
+                "value": "HAS AC SUMMARY METERS"
+              },
+              {
+                "name": "tms-type",
+                "value": "tms::ac::AcSummaryMeasurementUpdate"
+              },
+              {
+                "name": "idl-line",
+                "value": "4697"
+              },
+              {
+                "name": "section",
+                "value": "B.18.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "Medium (Periodic 1 s, 3 s deadline)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 4697 (tms::ac::AcSummaryMeasurementUpdate)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.18.1 / A.8.7 condition HAS AC SUMMARY METERS"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device with an AC port carrying hasSummaryMeasurementUpdate SHALL publish AcSummaryMeasurementUpdate at a 1 s period summarizing that port's AC measurements."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `AcSummaryMeasurementUpdate` to type `tms::ac::AcSummaryMeasurementUpdate` (idl_line 4697). Section B.18.1. QoS profile: Medium (Periodic 1 s, 3 s deadline). Conditional on: HAS AC SUMMARY METERS (A.8.7, one of the 10 named conditions)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-authorization-to-energize-reply",
+            "title": "AuthorizationToEnergizeReply (topic, Conditional)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "AuthorizationToEnergizeReply"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "condition",
+                "value": "SUPPORTS REQUEST"
+              },
+              {
+                "name": "tms-type",
+                "value": "AuthorizationToEnergizeReply"
+              },
+              {
+                "name": "idl-line",
+                "value": "3356"
+              },
+              {
+                "name": "section",
+                "value": "B.24.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "Response (Reliable, within 0.1 s)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 3356 (AuthorizationToEnergizeReply)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.24.1 / A.8.7 condition SUPPORTS REQUEST"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device that subscribes to AuthorizationToEnergizeRequest SHALL publish AuthorizationToEnergizeReply in response, per the request/reply pattern obligation (A.8.7)."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `AuthorizationToEnergizeReply` to type `AuthorizationToEnergizeReply` (idl_line 3356). Section B.24.1. QoS profile: Response (Reliable, within 0.1 s). Conditional on: SUPPORTS REQUEST (A.8.7, one of the 10 named conditions)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-control-parameter-state",
+            "title": "ControlParameterState (topic, Conditional)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "ControlParameterState"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "condition",
+                "value": "HAS CONTROL PARAMETERS"
+              },
+              {
+                "name": "tms-type",
+                "value": "ControlParameterState"
+              },
+              {
+                "name": "idl-line",
+                "value": "3539"
+              },
+              {
+                "name": "section",
+                "value": "B.14.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "PublishLast (At Start, On Change)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 3539 (ControlParameterState)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.14.1 / A.8.7 condition HAS CONTROL PARAMETERS"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device whose DeviceInfo.controlParameters has non-zero length SHALL publish ControlParameterState for those parameters at start-up and on change."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `ControlParameterState` to type `ControlParameterState` (idl_line 3539). Section B.14.1. QoS profile: PublishLast (At Start, On Change). Conditional on: HAS CONTROL PARAMETERS (A.8.7, one of the 10 named conditions)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-dc-load-sharing-state",
+            "title": "DcLoadSharingState (topic, Conditional)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "DcLoadSharingState"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "condition",
+                "value": "HAS DC PORTS"
+              },
+              {
+                "name": "tms-type",
+                "value": "tms::dc::DcLoadSharingState"
+              },
+              {
+                "name": "idl-line",
+                "value": "5084"
+              },
+              {
+                "name": "section",
+                "value": "B.22.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "PublishLast (At Start, On Change)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 5084 (tms::dc::DcLoadSharingState)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.22.1 / A.8.7 condition HAS DC PORTS"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device with any DC-wired power port SHALL publish DcLoadSharingState describing its current DC load-sharing participation (all-NaN is a legal honest value for a non-load-sharing battery)."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `DcLoadSharingState` to type `tms::dc::DcLoadSharingState` (idl_line 5084). Section B.22.1. QoS profile: PublishLast (At Start, On Change). Conditional on: HAS DC PORTS (A.8.7, one of the 10 named conditions)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-dc-measurement-update",
+            "title": "DcMeasurementUpdate (topic, Conditional)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "DcMeasurementUpdate"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "condition",
+                "value": "HAS DC METERS"
+              },
+              {
+                "name": "tms-type",
+                "value": "tms::dc::DcMeasurementUpdate"
+              },
+              {
+                "name": "idl-line",
+                "value": "4963"
+              },
+              {
+                "name": "section",
+                "value": "B.19.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "Medium (Periodic 1 s, 3 s deadline)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 4963 (tms::dc::DcMeasurementUpdate)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.19.1 / A.8.7 condition HAS DC METERS"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device with a DC port carrying hasExternalMeter or hasInternalMeter SHALL publish DcMeasurementUpdate at a 1 s period for that port's measurements."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `DcMeasurementUpdate` to type `tms::dc::DcMeasurementUpdate` (idl_line 4963). Section B.19.1. QoS profile: Medium (Periodic 1 s, 3 s deadline). Conditional on: HAS DC METERS (A.8.7, one of the 10 named conditions)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-dc-summary-measurement-update",
+            "title": "DcSummaryMeasurementUpdate (topic, Conditional)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "DcSummaryMeasurementUpdate"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "condition",
+                "value": "HAS DC SUMMARY METERS"
+              },
+              {
+                "name": "tms-type",
+                "value": "tms::dc::DcSummaryMeasurementUpdate"
+              },
+              {
+                "name": "idl-line",
+                "value": "4963"
+              },
+              {
+                "name": "section",
+                "value": "B.19.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "Medium (Periodic 1 s, 3 s deadline)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 4963 (tms::dc::DcSummaryMeasurementUpdate)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.19.1 / A.8.7 condition HAS DC SUMMARY METERS"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device with a DC port carrying hasSummaryMeasurementUpdate SHALL publish DcSummaryMeasurementUpdate at a 1 s period summarizing that port's DC measurements."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `DcSummaryMeasurementUpdate` to type `tms::dc::DcSummaryMeasurementUpdate` (idl_line 4963). Section B.19.1. QoS profile: Medium (Periodic 1 s, 3 s deadline). Conditional on: HAS DC SUMMARY METERS (A.8.7, one of the 10 named conditions)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-grounding-circuit-state",
+            "title": "GroundingCircuitState (topic, Conditional)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "GroundingCircuitState"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "condition",
+                "value": "HAS DEVICE GROUND PORTS"
+              },
+              {
+                "name": "tms-type",
+                "value": "GroundingCircuitState"
+              },
+              {
+                "name": "idl-line",
+                "value": "2914"
+              },
+              {
+                "name": "section",
+                "value": "B.15.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "PublishLast (At Start, On Change)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 2914 (GroundingCircuitState)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.15.1 / A.8.7 condition HAS DEVICE GROUND PORTS"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device whose PowerDeviceInfo.grounds has non-zero length SHALL publish GroundingCircuitState for those grounding circuits at start-up and on change."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `GroundingCircuitState` to type `GroundingCircuitState` (idl_line 2914). Section B.15.1. QoS profile: PublishLast (At Start, On Change). Conditional on: HAS DEVICE GROUND PORTS (A.8.7, one of the 10 named conditions)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-identity-nickname-state",
+            "title": "IdentityNicknameState (topic, Conditional)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "IdentityNicknameState"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "condition",
+                "value": "SUPPORTS REQUEST"
+              },
+              {
+                "name": "tms-type",
+                "value": "IdentityNicknameState"
+              },
+              {
+                "name": "idl-line",
+                "value": "3605"
+              },
+              {
+                "name": "section",
+                "value": "B.6.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "PublishLast (At Start, On Change)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 3605 (IdentityNicknameState)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.6.1 / A.8.7 condition SUPPORTS REQUEST"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device that supports IdentityNicknameRequest SHALL publish IdentityNicknameState reflecting the current operator-assigned nickname."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `IdentityNicknameState` to type `IdentityNicknameState` (idl_line 3605). Section B.6.1. QoS profile: PublishLast (At Start, On Change). Conditional on: SUPPORTS REQUEST (A.8.7, one of the 10 named conditions)."
+              }
+            ]
+          },
+          {
+            "id": "tms-topic-operator-intent-state",
+            "title": "OperatorIntentState (topic, Conditional)",
+            "props": [
+              {
+                "name": "topic-name",
+                "value": "OperatorIntentState"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "condition",
+                "value": "SUPPORTS REQUEST"
+              },
+              {
+                "name": "tms-type",
+                "value": "OperatorIntentState"
+              },
+              {
+                "name": "idl-line",
+                "value": "3927"
+              },
+              {
+                "name": "section",
+                "value": "B.11.1"
+              },
+              {
+                "name": "qos-profile",
+                "value": "PublishLast (At Start, On Change)"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+                "rel": "reference",
+                "text": "IDL line 3927 (OperatorIntentState)"
+              },
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 Table B.2 / Section B.11.1 / A.8.7 condition SUPPORTS REQUEST"
+              },
+              {
+                "href": "../../docs/compliance/tms/tms-coverage.json",
+                "rel": "evidence",
+                "text": "tms-coverage.json (generated type-catalogue coverage)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "A device that supports OperatorIntentRequest SHALL publish OperatorIntentState reflecting the current operator intent/priority."
+              },
+              {
+                "name": "guidance",
+                "prose": "Cross-reference: docs/compliance/tms/tms-coverage.json topics[] binds `OperatorIntentState` to type `OperatorIntentState` (idl_line 3927). Section B.11.1. QoS profile: PublishLast (At Start, On Change). Conditional on: SUPPORTS REQUEST (A.8.7, one of the 10 named conditions)."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "cross-cutting",
+        "title": "Cross-Cutting Requirements (Transport, QoS/Timing, IDL Annotations D.4/D.5, Topic Naming, Value Conventions)",
+        "props": [
+          {
+            "name": "count",
+            "value": "10"
+          }
+        ],
+        "parts": [
+          {
+            "name": "overview",
+            "prose": "Requirements that apply across all topics rather than to one topic each \u2014 the D.4/D.5 \"Conformance testing will verify...\" categories (extensibility, keys, bounded values, units, QoS interoperability), the transport binding (D.1-D.3), topic naming (A.8.6), and this project's documented value-representation adaptations."
+          }
+        ],
+        "controls": [
+          {
+            "id": "tms-xc-transport-binding",
+            "title": "Transport binding: DDS/XCDR2/RTPS vs. project adaptation",
+            "props": [
+              {
+                "name": "control-class",
+                "value": "cross-cutting"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 D.1 (p.289); D.2 (p.289); D.3 (p.290)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "All OMG DDS participants SHALL use XCDR2 encoding (D.1), connect to domain ID 0 by default (D.2), and use the Chapter B topic names over DDSI-RTPS (D.3). This project does not implement DDS at all; it is a documented, honest adaptation (MQTT+JSON) \u2014 see the 'adaptation' guidance below."
+              },
+              {
+                "name": "guidance",
+                "prose": "ADAPTATION: this adapter serializes each TMS struct to JSON and publishes over MQTT, never DDS/XCDR2/RTPS. This is a 100% project adaptation stated openly (docs/tms-compliance.md \u00a77.1) \u2014 the IDL is used only as the schema-shape oracle, not as a wire-interoperability target. This control is assessed for schema-shape fidelity, not DDS interoperability."
+              }
+            ]
+          },
+          {
+            "id": "tms-xc-qos-profile",
+            "title": "QoS profile assignment (8 defined profiles)",
+            "props": [
+              {
+                "name": "control-class",
+                "value": "cross-cutting"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 A.8.5.4 (pp.41-42, Table A.5); D.5 (p.292); D.5.1 (pp.293-294, Table D.7)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "Every topic SHALL use its assigned QoS profile (PublishLast/Command/Response/Reply/Continuous/Medium/Slow/Rare) with the Durability/Reliability/History/Deadline/Priority values of Table A.5. \"Conformance testing will verify that devices under test interoperate with other devices using the given values\" (D.5)."
+              },
+              {
+                "name": "guidance",
+                "prose": "MQTT has no native profile equivalent; this project approximates via QoS0/QoS1 + a publish-cadence timer per topic. Known violations tracked in docs/tms-compliance.md \u00a79 / behavioral-findings.md (PowerHardwareUpdate/StorageUpdate over-publish vs. Slow/10 s; DeviceInfo's TRANSIENT_LOCAL/RELIABLE emulated by periodic republish; Reply published QoS0 not Reliable)."
+              }
+            ]
+          },
+          {
+            "id": "tms-xc-timing-deadline",
+            "title": "Per-profile delivery deadline and publish-rate limiting",
+            "props": [
+              {
+                "name": "control-class",
+                "value": "cross-cutting"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 A.8.5.3 (p.40); A.8.5.4 (pp.41-42)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "Publishers SHALL update samples at the nominal rate for their topic's data trigger and SHALL NOT publish faster than the profile's rate limit (burst size 1 or 10, A.8.5.3); subscribers rely on the profile's delivery deadline (2 s Continuous / 3 s Medium / 20 s Slow / 2000 s Rare) to detect a communications fault."
+              },
+              {
+                "name": "guidance",
+                "prose": "Tracked violations (behavioral-findings.md): PowerHardwareUpdate/StorageUpdate publish every ~2 s against a Slow/10 s profile (should rate-limit); DcMeasurementUpdate's Medium/1 s nominal isn't met by the 2 s default poll interval."
+              }
+            ]
+          },
+          {
+            "id": "tms-xc-extensibility",
+            "title": "IDL extensibility annotations (FINAL/APPENDABLE/MUTABLE)",
+            "props": [
+              {
+                "name": "control-class",
+                "value": "cross-cutting"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 D.4.2.1 (p.291, Table D.4)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "\"These annotations change the DDS serialization and must not be removed. Conformance testing will verify that devices interoperate with appendable and mutable changes\" (D.4.2.1)."
+              },
+              {
+                "name": "guidance",
+                "prose": "Not applicable in the literal DDS-XTypes sense (this project has no XCDR2 wire, so there is no extensibility-kind byte to interoperate against); the JSON binding's analogous property is additive-only field evolution in lib-schema, tracked informally, not machine-checked today."
+              }
+            ]
+          },
+          {
+            "id": "tms-xc-key-values",
+            "title": "@key annotation interoperability",
+            "props": [
+              {
+                "name": "control-class",
+                "value": "cross-cutting"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 D.4.2.3 (p.291)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "\"Key values should not be removed entirely, as this may increase the DDS network traffic. Conformance testing will verify interoperability with devices that do use key values\" (D.4.2.3)."
+              },
+              {
+                "name": "guidance",
+                "prose": "Every @key-annotated IDL field is preserved as a Rust field in lib-schema (verified by the tms-idl-codegen descriptor-factory's byte-identity proofs, crates/lib-tms-model/tests) \u2014 tms-coverage.json's `keys` count per type is the machine-readable evidence."
+              }
+            ]
+          },
+          {
+            "id": "tms-xc-bounded-values",
+            "title": "@min/@max/@range bounded values",
+            "props": [
+              {
+                "name": "control-class",
+                "value": "cross-cutting"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 D.4.2.4 (p.292, Table D.6)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "\"Conformance testing will verify that devices publish values within this range, and subscribers flag out-of-range values, but not whether these annotations are used\" (D.4.2.4)."
+              },
+              {
+                "name": "guidance",
+                "prose": "IDL @range/@min/@max annotations are captured per-field in the generated catalogue (tms-coverage.json's `ranges` count); runtime range *enforcement* on values populated by lib-mapping is not yet independently machine-tested \u2014 tracked as future work, out of this gate's current scope (it reads tms-coverage.json, not live telemetry)."
+              }
+            ]
+          },
+          {
+            "id": "tms-xc-units-of-measure",
+            "title": "@unit annotation correctness",
+            "props": [
+              {
+                "name": "control-class",
+                "value": "cross-cutting"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 D.4.2.5 (p.292)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "\"Conformance testing will verify that device use the proper units of measurement but not whether this annotation is used\" (D.4.2.5)."
+              },
+              {
+                "name": "guidance",
+                "prose": "All @unit-annotated fields spot-checked correct against the IDL (behavioral-findings.md: \"Units all spot-checked correct (p.u. SoC, degC, s, V/A/W, W/s)\"); tms-coverage.json's `units` count per type is the machine-readable evidence of annotation presence in the catalogue."
+              }
+            ]
+          },
+          {
+            "id": "tms-xc-topicinfo-declaration",
+            "title": "TopicInfo participation-vs-DeviceInfo consistency",
+            "props": [
+              {
+                "name": "control-class",
+                "value": "cross-cutting"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 A.8.7 (p.44)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "\"All of these requirements can be determined from the information that is published in the device announcement (Section B.5). Conformance testing will verify that publishers and subscribers participate in topics consistent with their DeviceInfo\" (A.8.7)."
+              },
+              {
+                "name": "guidance",
+                "prose": "This adapter declares an empty TopicInfo.supportedRequestTopics (honest \u2014 no command surface), per decision 0003's supersession; the two named request topics it additionally subscribes as defense-in-depth are answered REPLY_NOT_IMPLEMENTED rather than claimed as supported."
+              }
+            ]
+          },
+          {
+            "id": "tms-xc-topic-naming",
+            "title": "Topic naming convention (prefix/middle/suffix; bare CamelCase; no per-device segment)",
+            "props": [
+              {
+                "name": "control-class",
+                "value": "cross-cutting"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 A.8.6 (p.44, Table A.6); D.3 (p.290)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "DDS topic names are bare CamelCase with a data-trigger suffix per Table A.6 (Info/Reply/Request/Result/State/Update) and carry no per-device segment \u2014 devices are DDS instances keyed by deviceId, not by topic name (A.8.6, D.3)."
+              },
+              {
+                "name": "guidance",
+                "prose": "ADAPTATION: MQTT topics are the only per-connection addressing mechanism available, so this project uses `tms/{device_id}/{snake_slug}` \u2014 a documented, reversible bridge rule (snake_slug -> CamelCase recovers the exact IDL name) \u2014 docs/tms-compliance.md \u00a76."
+              }
+            ]
+          },
+          {
+            "id": "tms-xc-value-representation",
+            "title": "Value representation: NaN-for-unavailable, sign convention, enum wire spellings, JSON key casing",
+            "props": [
+              {
+                "name": "control-class",
+                "value": "cross-cutting"
+              }
+            ],
+            "links": [
+              {
+                "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+                "rel": "reference",
+                "text": "MIL-STD-3071 A.9.6.5 (float convention, ~p.50); IDL enumerator spellings (Chapter B)"
+              }
+            ],
+            "parts": [
+              {
+                "name": "statement",
+                "prose": "Unavailable float values are represented as NaN (A.9.6.5); enumerators are transmitted using their IDL spelling; the standard defines no JSON binding at all, so JSON-specific choices (key casing, null-vs-NaN rendering) are spec-silent, not spec-violations."
+              },
+              {
+                "name": "guidance",
+                "prose": "ADAPTATION: JSON keys are snake_case (project/Rust convention) where the IDL is camelCase \u2014 a mechanical, reversible mapping (docs/tms-compliance.md \u00a77.2); every enum variant carries #[serde(rename = \"IDL_SPELLING\")] (\u00a77.4); Seplos's charge-positive current is sign-inverted to TMS's source-positive convention (\u00a75); fields with no Seplos source are honestly NaN, never a fabricated value."
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "back-matter": {
+      "resources": [
+        {
+          "uuid": "17832bbc-ca42-4096-a9c6-91468057d2ef",
+          "title": "MIL-STD-3071 Change 2, Appendix D (TMS Data Model, DDS/IDL)",
+          "rlinks": [
+            {
+              "href": "../../docs/compliance/tms/mil-std-3071.pdf",
+              "media-type": "application/pdf"
+            }
+          ]
+        },
+        {
+          "uuid": "51263f7a-b328-41d9-aaf2-4072c0004491",
+          "title": "MIL-STD-3071 TMS Data Model IDL v2.0.2 (checked-in ground truth)",
+          "rlinks": [
+            {
+              "href": "../../docs/compliance/tms/mil-std-3071_data_model.idl",
+              "media-type": "text/plain"
+            }
+          ]
+        },
+        {
+          "uuid": "fe8bebe9-1ea5-4d4b-9814-d1019be8c7e3",
+          "title": "tms-coverage.json (generated type-catalogue coverage evidence)",
+          "rlinks": [
+            {
+              "href": "../../docs/compliance/tms/tms-coverage.json",
+              "media-type": "application/json"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

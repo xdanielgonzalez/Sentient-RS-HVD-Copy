@@ -1,0 +1,150 @@
+name: _dds_interop (reusable)
+
+# Reusable workflow: the DDS/RTPS interop e2e lane (story #321 WP7, #325) — sibling to `_test.yml`,
+# on its own file/job so its (different failure class: a real domain-0 IPv6/RTPS participant, not
+# just a pty/broker) result reads independently in the PR checks list and can be resourced/timed on
+# its own. No docker/buildx build happens here (unlike `deploy/dds-conformance/`'s podman-compose
+# harness, which validates against STOCK CycloneDDS tooling and is a separate, LOCAL-only harness —
+# see that directory's README) — `dds_interop_e2e.rs` drives a real `dust_dds` participant AND a real
+# spawned `bin-rpi` child process directly as plain OS processes inside this ONE job container
+# (single netns by construction), so this lane stays on the same light `arc-runner-set` +
+# sentient-builder container the `test`/`e2e` jobs already use, NOT `arc-dind` (that runner class is
+# reserved for lanes that actually build/run container images — repo memory arc-dind-scale-set). Kept
+# deliberately light: this ARC pool is small (2 nodes) and already carries the `test`/`security`/
+# `supply-chain`/`quality` lanes concurrently (repo memory serialize-heavy-ci-runs).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  dds-interop:
+    name: dds-interop (dust_dds + real bin-rpi, nextest dds-e2e group)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # Bounded-debugging datum (repo doctrine: get the fact, don't guess) for the CI-only "no
+      # Heartbeat sample arrived within 30s" failure — the test passes locally (including in an
+      # fe80-only user netns), so the ARC pod's IPv6-multicast environment is the remaining suspect.
+      # This step is pure diagnostics: it never fails the job (`|| true` on every fallible line) — it
+      # only prints ip -6 state and either MCAST-OK or MCAST-TIMEOUT so a red nextest run below still
+      # carries the datum in its own log, without needing a second, separate CI run to capture it.
+      - name: ipv6 multicast self-probe
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo "---- ip -6 addr ----"
+          ip -6 addr || true
+          echo "---- /proc/net/if_inet6 ----"
+          cat /proc/net/if_inet6 || true
+          echo "---- python3 SO_REUSEADDR IPv6 multicast probe (ff02::1234%eth0, port 7401) ----"
+          cat > /tmp/mcast_probe.py <<'PY'
+          import socket
+          import struct
+          import sys
+
+          GROUP = "ff02::1234"
+          PORT = 7401
+          IFACE = "eth0"
+
+          try:
+              ifindex = socket.if_nametoindex(IFACE)
+          except OSError as e:
+              print(f"MCAST-TIMEOUT (if_nametoindex({IFACE!r}) failed: {e})")
+              sys.exit(0)
+
+          rx = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+          rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          rx.bind(("::", PORT))
+          mreq = socket.inet_pton(socket.AF_INET6, GROUP) + struct.pack("@I", ifindex)
+          rx.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_JOIN_GROUP, mreq)
+          rx.settimeout(5.0)
+
+          tx = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+          tx.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_IF, struct.pack("@I", ifindex))
+          tx.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_LOOP, 1)
+          tx.sendto(b"probe", (GROUP, PORT, 0, ifindex))
+
+          try:
+              data, addr = rx.recvfrom(1024)
+              print(f"MCAST-OK (received {data!r} from {addr})")
+          except socket.timeout:
+              print("MCAST-TIMEOUT (no datagram received within 5s)")
+          PY
+          python3 /tmp/mcast_probe.py || true
+          echo "---- userns (unshare -r -n) availability ----"
+          unshare -r -n true && echo USERNS-OK || echo USERNS-BLOCKED
+
+      # Scoped to the `dds_interop_e2e` binary only (`.config/nextest.toml`'s `dds-e2e` test-group,
+      # `max-threads = 1` — real domain-0 IPv6 SPDP multicast is a host-wide resource, so no other
+      # DDS-domain-0 test may run concurrently with it; see that file's comment). `bin-rpi` is built
+      # lazily inside the test itself (`ensure_bin_rpi_built`, the same real-binary pattern the
+      # existing `test-e2e` lane's `capture_e2e`/`sigterm_drain_e2e` already use) — no separate
+      # artifact build/upload/download step needed; cargo's own incremental target/ dir (this job's
+      # normal build cache) IS the "prebuilt artifact" by the time the test process shells out to it.
+      #
+      # The veth pair is built with `.ci/scripts/netns_veth.py` (raw RTM_NEWLINK netlink + ioctl
+      # SIOCSIFFLAGS, stdlib-only) instead of `ip link ...`: the sentient-builder container has no
+      # iproute2 and the runner is non-root (no apt to add it) — datum from the probe step above,
+      # which confirmed userns + IPv6 multicast both work (USERNS-OK, MCAST-OK), leaving only the
+      # `ip` tooling itself missing. `lo` alone does NOT substitute for the veth pair here — proven
+      # empirically: `lo` lacks IFF_MULTICAST, so real RTPS SPDP multicast never reaches it.
+      #
+      # The netns intentionally has no external network, so all cargo fetches + compiles MUST happen
+      # OUTSIDE it (warm CARGO_HOME) before we unshare. Three build phases outside netns:
+      #   1. `cargo fetch --locked` — populate CARGO_HOME with all crates (index + crate blobs)
+      #   2. `cargo nextest run ... --no-run` — compile the test binary (test runner + test link)
+      #   3. `cargo build -p bin-rpi --bin bin-rpi --locked` — pre-compile bin-rpi (what the test's
+      #      `ensure_bin_rpi_built()` will try to build inside netns; with CARGO_NET_OFFLINE=true
+      #      this becomes a no-op cache hit instead of a network retry)
+      # Then inside netns with CARGO_NET_OFFLINE=true, the test's internal build is guaranteed
+      # offline (any missing cache item hard-errors instead of hanging).
+      - name: nextest dds-e2e (prefetch + prebuild phase)
+        run: |
+          cargo fetch --locked
+          cargo nextest run -p test-e2e --locked -E 'binary(dds_interop_e2e)' --no-run
+          cargo build -p bin-rpi --bin bin-rpi --locked
+      - name: nextest dds-e2e (test-e2e::dds_interop_e2e in offline netns)
+        run: unshare -r -n bash -c "python3 .ci/scripts/netns_veth.py && export CARGO_NET_OFFLINE=true && DDS_IFACE=eth0 cargo nextest run -p test-e2e --locked -E 'binary(dds_interop_e2e)'"
+
+      # Native step summary, mirrors `_test.yml`'s `e2e` job's identical step (same checked-in
+      # parser script, same JUnit path — `.config/nextest.toml`'s `[profile.default.junit]`).
+      - name: Publish dds-interop summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          JUNIT="target/nextest/default/junit.xml"
+          {
+            echo "## dds-interop (nextest) results"
+            echo
+            if [ -f "$JUNIT" ]; then
+              python3 .ci/scripts/junit_to_summary.py "$JUNIT"
+            else
+              echo "_no junit.xml produced (job likely failed before nextest ran)_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Uploaded so ci.yml's `publish-dds-interop-report` job (GitHub-hosted, dorny/test-reporter —
+      # see `_test.yml`'s identical `publish-test-report` job comment for why that action needs a
+      # non-ARC runner) can turn it into a per-test-case Check. `if-no-files-found: error` — fail
+      # loudly rather than silently stop publishing downstream (mirrors `_test.yml`'s e2e upload step).
+      - name: Upload dds-interop junit
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-dds-interop
+          path: target/nextest/default/junit.xml
+          if-no-files-found: error

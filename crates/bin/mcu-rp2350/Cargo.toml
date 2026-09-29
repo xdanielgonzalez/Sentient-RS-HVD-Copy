@@ -1,0 +1,263 @@
+# bin/mcu-rp2350 — the RP2350 (Cortex-M33) MCU shipping binary workspace (EPIC #350, story S1 #352),
+# replacing the retired Zephyr MCU path. Excluded from the root sentient-rs workspace (this repo's
+# root Cargo.toml `members` list is explicit paths, not globs, so it is never auto-discovered — but
+# see this file's own risk note below: the root `exclude` array should still gain a "bin/mcu-rp2350"
+# entry, belt-and-suspenders like `bin/zephyr` and `hil/pico-seplos-emu`, and that entry is OUT OF
+# THIS CRATE'S TERRITORY). Own toolchain/target (thumbv8m.main-none-eabihf, RP2350A/Cortex-M33), own
+# Cargo.lock, never `cargo build --workspace` from the repo root.
+#
+# Unlike hil/pico-seplos-emu (a single-package workspace — its `[workspace]` table is empty because
+# the package IS the only member), this IS a real multi-member workspace: `ns` (non-secure world)
+# was the only member through story S1 #352; `s` (secure world, thumbv8m.main-none-eabihf, no
+# executor) and `abi` (the frozen NS<->S ABI, target-independent/no_std, host-testable) land here
+# with the TrustZone-M S/NS split (story S4 #355, Agent A territory — `ns` itself, Agent B's
+# territory, is unchanged by this addition until it grows a `veneers` feature). Centralizing the
+# embassy/heapless pins + workspace-internal path deps here (mirroring the root sentient-rs
+# Cargo.toml's own `[workspace.dependencies]` convention) means every future member inherits the
+# SAME pins via `workspace = true` instead of re-declaring them.
+[workspace]
+resolver = "2"
+members = ["ns", "s", "abi"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "LicenseRef-Proprietary"
+authors = ["High Velocity Decisions <john@highvelocitydecisions.com>"]
+rust-version = "1.91"
+
+[workspace.dependencies]
+# --- embassy MCU stack (RP2350A / Cortex-M33, thumbv8m.main-none-eabihf) ---
+# Same trio + feature set as hil/pico-seplos-emu (the proven, verified-building RP2350 template) —
+# see that crate's Cargo.toml/memory.x comment trail for the rp235xa/IMAGE_DEF verification this
+# mirrors. NOTE: embassy-executor 0.10's Cortex-M arch feature is named "platform-cortex-m" (verified
+# against hil/pico-seplos-emu/Cargo.lock, which resolves and builds with it) — not "arch-cortex-m"
+# (the older embassy-executor naming); use hil's proven name here.
+embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread"] }
+embassy-rp = { version = "0.10.0", features = ["rp235xa", "time-driver", "critical-section-impl"] }
+embassy-time = "0.5.1"
+# Bumped 0.6.2 -> 0.8.0 (EPIC #350, story S8 #359) to match lib-net's new generation. embassy-sync
+# carries NO `links` key of its own (verified), so no conflict with the embassy-rp/executor/time
+# trio; 0.8.0 is a compatible point release for all consumers here. `default-features = false`
+# matches lib-net's own embassy-sync pin (crates/lib-net/Cargo.toml) — same version, so exactly
+# one resolved embassy-sync in this graph.
+embassy-sync = { version = "0.8.0", default-features = false }
+# `lib_io::EmbassyUart`'s generic delay param is bound by `embedded_hal_async::delay::DelayNs`;
+# embassy_time::Delay implements it (embassy-time 0.5.1 depends on embedded-hal-async 1.0.0
+# unconditionally — verified via hil/pico-seplos-emu/Cargo.lock's resolved dependency list).
+embedded-hal-async = "1.0"
+embedded-hal = "1.0"
+embedded-io-async = "0.6"
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.5"
+heapless = "0.9"
+panic-halt = "1.0.0"
+panic-probe = { version = "1", features = ["print-defmt"] }
+static_cell = "2"
+# `s` (secure world) needs no executor, but its `static` service state (a single
+# SoftwareSessionStore behind one spinlock, single-consumer veneer calls — see `s/src/service.rs`)
+# is guarded via the `critical-section` crate's global critical-section implementation, same
+# frontend `embassy-sync`'s own `CriticalSectionRawMutex` uses. `s` never links `embassy-rp` (no
+# executor, no HAL — it is a bare cortex-m-rt binary), so it cannot rely on `embassy-rp`'s
+# `critical-section-impl` feature (that impl is only in `ns`'s separate dependency graph/binary) —
+# `s/Cargo.toml` instead enables `cortex-m`'s OWN `critical-section-single-core` feature (disable/
+# restore PRIMASK around the section; correct for a single Cortex-M33 core with no second execution
+# context racing it) to supply the impl for the `s` binary specifically. `critical-section` itself
+# is named here only as the shared frontend version pin; the actual impl choice is per-binary.
+critical-section = "1.2"
+# `s/build.rs` compiles `../veneers/veneer.c` with `-mcmse` via the `cc` crate (a build-dependency
+# only — never linked into either binary's own crate graph).
+cc = "1"
+# --- OLED FeatherWing UI, pure-render layer (WP5 part 1, `ns`'s optional `ui` feature) ---
+# 128x32 SSD1306 (Adafruit PID 2900). `no_std`, no allocator (`default = []` in embedded-graphics'
+# own Cargo.toml — verified via the live crates.io index/source, not guessed): text + mono fonts +
+# `DrawTarget`/`mock_display::MockDisplay` are all always-on, no feature needed. Deliberately NOT
+# enabling embedded-graphics' own "defmt" feature: it pins `defmt = "0.3.2"` (`links` key), which
+# would conflict with this workspace's own `defmt = "1.0"` pin above — same class of hazard already
+# documented for `embassy-net`/`embassy-net-wiznet` above; `ui`-feature code instead uses this
+# workspace's defmt 1.0 the same way the rest of `ns` does (`Debug2Format`, if ever needed). No
+# widget toolkit: `embedded-gui`/Slint/LVGL are rejected (single-author/bus-factor risk, or require
+# a global allocator this `no_std` target doesn't have) — see the WP5 task note.
+embedded-graphics = { version = "0.8.2", default-features = false }
+# RTT-only logging (feature "defmt" on `ns`, default OFF) — UART0 on this board carries the Seplos
+# wire, not a log console (same posture as hil/pico-seplos-emu and the retired bin/zephyr), so defmt
+# is opt-in for a debug/bench build only, never the shipping default.
+# defmt 1.x + defmt-rtt 1.x (NOT the 0.3/0.4 pair): the 0.3 crate is a compat shim over defmt 1.x,
+# and defmt-rtt 0.4's global_logger silently no-ops the write path through that shim (RTT control
+# block present, but WrOff never advances — logs vanish). embassy-rp 0.10 pulls defmt 1.1.x anyway,
+# so a coherent 1.x stack = one logger, one wire format, decodable by defmt-print 1.x. (RP2350
+# known-good per pico.implrust.com/debugging/rtt.html.)
+defmt = "1.0"
+defmt-rtt = "1.0"
+# `log` -> defmt/RTT bridge (feature "defmt" on `ns` only — see ns/src/impl_defmt_log_bridge.rs):
+# `impl_app::run`'s poll loop (shared with the std/tokio `bin-rpi` target, which DOES wire a `log`
+# sink) emits its diagnostics — "poll loop started", the periodic health summary, dead-cycle
+# backoff/reconnect warnings — via the `log` facade, not `defmt` directly. Optional + pulled in only
+# by `ns`'s `defmt` feature (`dep:log`) so the default build's dep graph is unchanged.
+# `default-features = false` drops `log`'s `std` feature — this is a no_std crate; the facade's core
+# API (`Log`/`Record`/`Level`/`set_logger`) needs no std support.
+log = { version = "0.4", default-features = false }
+
+# --- W5500 Ethernet (EPIC #350, story S8 #359, Agent A/"Net" phase) ---
+# Versions verified against the LIVE crates.io index (`curl https://index.crates.io/em/ba/<crate>`,
+# not guessed) and cross-checked against embassy-rs/embassy's OWN `examples/rp/Cargo.toml` on the
+# `main` branch (which pins these exact same two versions together) — this pairing is the upstream
+# project's own proven-compatible combination, not an independent guess:
+#   embassy-net-wiznet 0.3.0 -> embassy-time req "^0.5.1" (== this workspace's own embassy-time pin
+#     above, byte-for-byte) and embassy-net-driver-channel "^0.4.0".
+#   embassy-net 0.9.1        -> embassy-time req "^0.5.1" (same exact match) and heapless req "^0.9"
+#     (== this workspace's own heapless "0.9" pin above — ONE heapless resolves, no duplicate the
+#     way lib-net's own embassy-net 0.6.0 spike needs a second `heapless-embassy-net` 0.8 for its
+#     older embassy-net's `StaticConfigV4::dns_servers` field).
+# Both therefore share this workspace's embassy-time 0.5.1 EXACTLY — no second `embassy-time-driver`
+# (its `links = "embassy-time"` key) enters the graph, so there is no repeat of the lib-net
+# `embassy`-feature links conflict this crate is forbidden from re-triggering (see this file's
+# ns/Cargo.toml comment on `channel-embassy` for that conflict's original shape).
+#
+# embassy-net-driver-channel 0.4.0 (embassy-net-wiznet's dep) and embassy-net 0.9.1 both in turn
+# want embassy-sync "^0.8.0" — a SECOND, different-major embassy-sync from this workspace's own
+# 0.6.2 pin above (used by `lib-net`'s `channel-embassy` feature). embassy-sync carries no `links`
+# key (same fact already verified above for the 0.6.2 pin), so Cargo resolves BOTH 0.6.2 and 0.8.0
+# side by side with no conflict — one extra compiled crate, not a build error; this repeats the
+# exact "no links key, multiple majors coexist" pattern `crates/lib-net/Cargo.toml` already
+# documents for its own embassy-net 0.6.0 spike.
+#
+# Deliberately NOT enabling either crate's own "defmt" feature. Both declare a `defmt` dep req of
+# "^1.0.1" (verified in the same index fetch); when this comment was written the workspace pinned
+# defmt 0.3 and that req was a hard conflict (defmt 1.x declares `links = "defmt"` — a real
+# links-key hazard on top of the semver break). STALE, flagged rather than smoothed over: the pin
+# above is now `defmt = "1.0"`, so that specific conflict no longer applies and the feature has
+# simply never been re-evaluated. Nothing depends on it either way — `main.rs`'s `broker_task`
+# renders the embassy-net address/config types by destructuring them into primitive `{=u8}` /
+# `{=u16:x}` defmt args, so it never needs a `defmt::Format` impl from these crates at all.
+embassy-net-wiznet = { version = "0.3.0", default-features = false }
+# Dual-stack + identity for the W5500 leg (story #359, DDS prep #328):
+#   * `dhcpv4-hostname` — advertise the device hostname as DHCP Option 12 (`DhcpConfig.hostname`),
+#     injected at flash/build time via `DEVICE_HOSTNAME` (defaults to `meteor-pico`).
+#   * `proto-ipv6` + `multicast` + `slaac` — REQUIRED for DDS/RTPS over UDP/IPv6 (MIL-STD-3071,
+#     domain 0, SPDP multicast ff02::1234; see docs/tms-compliance.md). `slaac` transitively enables
+#     `proto-ipv6` + `multicast` (embassy-net 0.9.1 Cargo.toml) and is what actually assigns the
+#     interface its `fe80::` link-local address (Inner::apply_static_config, gated `#[cfg(slaac)]`)
+#     — plain `proto-ipv6` alone adds NO address. Listed explicitly for clarity.
+embassy-net = { version = "0.9.1", default-features = false, features = [
+    "dhcpv4",
+    "dhcpv4-hostname",
+    "tcp",
+    "proto-ipv6",
+    "multicast",
+    "slaac",
+] }
+# `embassy_futures::select`/`Either` — races read-vs-timeout in `ns/src/impl_buffered_uart_adapter.rs`
+# (and `boot_mesh.rs`/`boot_ui.rs`), plus the accept/read/channel `select3` at the heart of
+# `lib_net::embassy::pump::async_broker_pump`, which `main.rs`'s `broker_task` drives. Pinned to
+# the exact version embassy-net-wiznet 0.3.0 itself requires (`^0.1.2`, verified in the index fetch
+# above) so there is only one resolved `embassy-futures` in the graph.
+embassy-futures = { version = "0.1.2", default-features = false }
+# The async `SpiDevice` wrapper around embassy-rp's `Spi<'static, SPI0, Async>` + a CS `Output` pin
+# — mirrors embassy-rs/embassy's OWN `examples/rp/src/bin/ethernet_w5500_tcp_client.rs` exactly
+# (verified by fetching that file from the `embassy-rs/embassy` `main` branch), which pins
+# `embedded-hal-bus = { version = "0.1", features = ["async"] }` for this same role. Requires only
+# embedded-hal/embedded-hal-async "^1.0" (verified in the index fetch) — both already this
+# workspace's own pins above, so no extra version enters the graph for this dep's own sake.
+embedded-hal-bus = { version = "0.1", default-features = false, features = ["async"] }
+
+# --- Shared async I2C1 bus (WP4/WP5, `ns`'s `power`/`ui` features) ---
+# `embassy-embedded-hal`'s `shared_bus::asynch::i2c::I2cDevice<'a, M: RawMutex, BUS>` (wrapping an
+# `&'a embassy_sync::mutex::Mutex<M, BUS>`) is the actual crate/type for sharing an EMBASSY-async I2C
+# bus across multiple consumers (INA3221 + SSD1306) — NOT `embedded-hal-bus` (pinned above, for the
+# W5500 SPI leg only). Verified directly against `embedded-hal-bus` 0.1.0's own source + CHANGELOG
+# (cached locally, checked byte-for-byte): its `async` feature adds async support to SPI's
+# `ExclusiveDevice` ONLY (CHANGELOG "v0.1.0-rc.1": "Added embedded-hal-async support to SPI
+# ExclusiveDevice") — its `i2c` module (`RefCellDevice`/`CriticalSectionDevice`) carries no
+# `#[cfg(feature = "async")]` impl at all, in any released version. `embassy-embedded-hal` 0.6.0 is
+# pinned to match the version already resolved transitively in this workspace's Cargo.lock (via
+# embassy-rp/embassy-net-wiznet), so this direct pin introduces no second version into the graph.
+embassy-embedded-hal = { version = "0.6.0", default-features = false }
+# --- OLED FeatherWing UI hardware driver (WP5 part 2, `ns`'s `ui` feature) ---
+# `Ssd1306Async` + `BufferedGraphicsModeAsync` + `DisplaySize128x32`, per the WP5 task note.
+# `I2CDisplayInterface::new`/`Ssd1306Async` bind to a BLOCKING `embedded_hal::i2c::I2c` unless this
+# crate's own `async` feature is enabled — verified via crates.io's dependencies API for 0.10.0 that
+# `async` is present but NOT default-on. Missing it produces exactly the confusing trait-bound error
+# the WP5 task note's "ssd1306 issue #215" trap warns about (handing an async `I2cDevice` to a
+# blocking-bound constructor). Keeps the crate's own defaults (`graphics`, `embedded-graphics-core`)
+# for `DrawTarget`/`mock_display::MockDisplay` support, already relied on by `ns::ui`'s host golden
+# tests.
+ssd1306 = { version = "0.10.0", features = ["async"] }
+
+# --- NeoPixel status LED (`ns`'s optional `neopixel` feature) ---
+# `smart_leds::RGB8` — the plain 3-`u8` color type `embassy_rp::pio_programs::ws2812::PioWs2812`
+# itself takes/packs (verified by reading that module's source directly, not guessed). Already
+# resolved in this workspace's Cargo.lock as a transitive dep of `embassy-rp` (its own
+# `pio_programs::ws2812` module uses it internally) at the SAME 0.4.0 this pins, so naming it
+# directly here introduces no second version into the graph — just makes the type nameable from
+# `ns`'s own code. `no_std` already (`#![no_std]` in its own lib.rs); no features needed beyond the
+# plain `RGB8`/`RGBW` structs this crate re-exports from `smart-leds-trait`.
+smart-leds = { version = "0.4.0", default-features = false }
+
+# --- workspace-internal path deps ---
+# RISK (flagged for the orchestrator): `bin-mcu-platform` does not exist in this checkout as of this
+# commit (Agent A's concurrent work, EPIC #350 story S1 #352) — this entry names the crate `ns`
+# depends on per the shared story spec; it will resolve once that crate lands.
+bin-mcu-platform = { path = "../mcu-platform" }
+spec-app = { path = "../../../crates/spec-app" }
+impl-app = { path = "../../../crates/impl-app" }
+lib-io = { path = "../../../crates/lib-io", default-features = false }
+lib-net = { path = "../../../crates/lib-net", default-features = false }
+lib-parse = { path = "../../../crates/lib-parse", default-features = false }
+lib-mapping = { path = "../../../crates/lib-mapping", default-features = false }
+lib-profile = { path = "../../../crates/lib-profile", default-features = false }
+lib-security = { path = "../../../crates/lib-security", default-features = false }
+# ADR 0013's rustls glue (`crates/lib-tls`, a root-workspace member — same "path dep outside this
+# excluded workspace's own directory tree" shape as `lib-security` above, so it is a plain path
+# entry, not a `members` concern). Staged here so WP-6's NS wiring inherits one pin, but NOT yet
+# consumed by any member: every `lib-tls` constructor takes a `SecureProvider` (ADR 0013 §1's
+# aggregation over the eight `lib-security` traits) and no type in this workspace satisfies that
+# bound until the Secure-world backends and their `sv_*` veneer entry points exist (WP-4/WP-5).
+# `ns`'s `tls` feature therefore gates the interposition CALL SITE only — see `ns/Cargo.toml`'s
+# `tls` comment and `ns/src/boot_tls.rs` for the fail-closed contract. The dependency edge lands in
+# WP-6, after WP-3's `thumbv8m` footprint gate.
+lib-tls = { path = "../../../crates/lib-tls", default-features = false }
+# The zero-dependency leaf canonical-model crate (WP4) — `ns`'s `power` feature needs
+# `DeviceRailReading`/`DeviceRail` directly (to type the INA3221 driver's `rails` array), same
+# reasoning `lib-io/ina3221`'s own Cargo.toml comment gives for depending on this crate rather than
+# `spec-app`/`lib-mapping`. No features of its own to disable.
+lib-canonical = { path = "../../../crates/lib-canonical" }
+# Intra-workspace sibling (this excluded workspace's own member): path relative to THIS manifest.
+rp2350-abi = { path = "abi" }
+
+# --- Vendored embassy-net-wiznet fork (RX frame-length header corruption panic) -------------------
+# embassy-net-wiznet 0.3.0's `WiznetDevice::read_frame` (src/device.rs) trusts the W5500's 2-byte RX
+# frame-length header unconditionally: `u16::from_be_bytes(..) as usize - 2` underflows if the chip
+# ever returns a corrupted header, and even a non-underflowing-but-too-large header indexes past the
+# fixed 1514-byte MTU buffer — both a hard panic. RTT-confirmed on our bench hardware, 6/6 reset
+# cycles (garbage header `0xFFFF`/`0x841F` on the discrete W5500 module's marginal SPI wiring, SPI0 at
+# 16 MHz — see `ns/src/boot_w5500.rs`): the panic traps into the default (non-resetting) HardFault
+# handler, starving the single embassy executor, so `POLL_HEARTBEAT` stops advancing, the 8s hardware
+# watchdog stops being fed, and the board reboots ~6-8s later. This bug is already fixed on upstream
+# `main` (embassy-rs/embassy PR #5706, commit 14592448e1, merged 2026-03-28) but never released —
+# crates.io's `max_version` for embassy-net-wiznet is still 0.3.0 — so there is no version bump to
+# take; we vendor the pristine 0.3.0 tree with that same upstream fix applied (verbatim in logic).
+# Provenance, diff rationale, upstream PR/issue links: vendor/embassy-net-wiznet/PATCHES.md. Consumed
+# as a [patch.crates-io] PATH override (same convention as the root sentient-rs workspace's own
+# vendored `dust_dds` — a git source is forbidden by the root `deny.toml`'s `unknown-git = "deny"`; a
+# path patch keeps the source registry-clean) so the manifest above still reads as the plain
+# crates.io `embassy-net-wiznet = "0.3.0"` dep. This is a workspace-root `[patch]`, so it applies to
+# the WHOLE graph of this excluded workspace, including `lib-net`'s own `embassy-net-wiznet` dep
+# (verify with `cargo tree -i embassy-net-wiznet` from this directory — must show exactly one
+# resolved copy, at this path). Drop `vendor/embassy-net-wiznet` + this block, and bump the version
+# pin above, as soon as a released embassy-net-wiznet > 0.3.0 carrying PR #5706 ships on crates.io.
+[patch.crates-io]
+embassy-net-wiznet = { path = "vendor/embassy-net-wiznet" }
+
+# `[profile.*]` tables are only honored from the WORKSPACE ROOT manifest (Cargo ignores them in a
+# member's Cargo.toml) — unlike hil/pico-seplos-emu, where the single-package Cargo.toml IS both
+# package and workspace root, `ns/Cargo.toml` is a plain member, so these live here.
+# no_std binary: no unwinding support (no eh_personality), so panic must abort in every profile.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = "s"
+debug = true

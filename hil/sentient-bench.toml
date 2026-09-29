@@ -1,0 +1,36 @@
+# bin-rpi config for the HIL bench (Phase 1: Pico Seplos BMS pack emulator over raw UART) — a
+# separate config from config/sentient.toml (the production sample), deliberately: distinct
+# device.id so bench MQTT topics never collide with/mimic production ones.
+#
+# `port` below is set for the current bench (a Pi Zero 2 W): the header UART is /dev/serial0
+# (-> /dev/ttyS0, the mini-UART); there is NO /dev/ttyAMA0 on this board. On a different bench Pi,
+# confirm the real device node first (`ls -la /dev/serial* /dev/tty*`) and adjust — see
+# hil/README.md's "Pi Zero 2 W bench" section + smoke-test procedure. NOTE: /dev/serial0 ships owned
+# by a serial login console; free it first (`systemctl disable --now serial-getty@ttyS0`, drop
+# console=serial0 from cmdline, reboot) or bin-rpi cannot open the port.
+#
+# Run: SENTIENT_CONFIG=hil/sentient-bench.toml cargo run -p bin-rpi
+# (or override just the port without editing this file: SENTIENT_SERIAL__PORT=/dev/ttyWHATEVER)
+
+[device]
+id = "HIL-BENCH-001"
+
+[serial]
+kind = "rs232"        # raw point-to-point TTL leg, no RTS/direction line on the Pico side
+port = "/dev/serial0" # Pi Zero 2 W header UART (mini-UART / ttyS0) — see the note above
+baud = 19200
+parity = "none"
+stop_bits = 1
+read_timeout_ms = 1000
+
+[poll]
+dip_addresses = [0]  # the Pico responder only answers DIP address 0
+interval_ms = 1000
+fault_every = 0       # the phase-1 responder doesn't implement 0x44 — never poll it
+
+[broker]
+host = "127.0.0.1"
+port = 1883
+
+[publish]
+prefix = "tms"

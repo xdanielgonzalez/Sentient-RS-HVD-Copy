@@ -1,0 +1,175 @@
+name: builder-image
+
+# Build + push the CI builder images to the internal Harbor registry (rust-mirror:443/sentient/...) from
+# CI (replacing the local-docker-only .ci/scripts/publish-builder-image.sh, kept as a fallback). CI
+# PULLS these back from the SAME hosted `sentient` project (public → anonymous pull). We push
+# straight to Harbor rather than ghcr.io: the images are only ever consumed in-cluster through Harbor
+# anyway, so this drops both the ghcr.io push-auth 403 and the ghcr→proxy round-trip. NOTE: pushes go
+# to the regular hosted `sentient` project — NOT `ghcr`, which is a pull-through cache and
+# rejects pushes.
+#
+# FAN-OUT: sentient-builder is the base; sentient-yocto-builder is FROM it. So sentient-builder
+# builds FIRST, then the derived image builds FROM the sentient-builder just pushed at this SHA
+# (a self-consistent pair). (The sentient-zephyr-builder image retired with the Zephyr MCU path —
+# EPIC #350, story #352.)
+#
+# RUNNER: the dedicated `arc-dind` runner scale set (gha-runner-scale-set, containerMode: dind) on
+# the k3s ARC cluster — each runner has a dockerd sidecar (DOCKER_HOST=unix:///var/run/docker.sock,
+# --mtu=1450 to match the flannel overlay so apt/egress works) + the docker CLI, in-cluster so
+# builds reach the internal kellnr mirror. min 0 (scales from zero), max 2.
+#
+# AUTH: a Harbor ROBOT ACCOUNT (project-scoped push credential — Harbor OIDC is human-SSO only, so
+# robots are the CI primitive). Name + token come from secrets HARBOR_ROBOT_USER / HARBOR_ROBOT_TOKEN.
+# We write them straight into ~/.docker/config.json instead of `docker login`: the dind daemon doesn't
+# trust the Harbor private CA, so a login handshake would x509-fail — but buildx pushes via buildkit,
+# which TLS-trusts Harbor through the `ca=`/SSL_CERT_DIR config below and only needs the creds on disk.
+#
+# workflow_dispatch-only until validated; then uncomment the push: trigger.
+on:
+  workflow_dispatch: {}
+  # push:
+  #   branches: [main]
+  #   paths: ['.ci/**', '.ci/scripts/publish-builder-image.sh', '.github/workflows/builder-image.yml']
+
+concurrency:
+  group: builder-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: rust-mirror:443
+  NAMESPACE: sentient
+  KELLNR_HOST: rust-mirror:10.0.0.192
+
+jobs:
+  # Base image — the two derived images FROM it, so it must land first.
+  base:
+    name: build sentient-builder
+    # arc-dind per the RUNNER note above — the kubernetes-mode arc-runner-set forbids bare
+    # (container-less) jobs, and buildx needs the dind daemon anyway.
+    runs-on: arc-dind
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          # Self-contained Harbor trust for the isolated buildkit builder (the dind sidecar daemon
+          # does NOT inherit the node CA, and driver:docker fails the manifest leg). `ca=` makes
+          # buildx COPY the CA into the builder at /etc/buildkit/certs/rust-mirror:443/ and covers the
+          # registry-API leg; the /service/token auth leg uses the container's SYSTEM cert pool, NOT
+          # the per-registry config (build-push-action#1349) — so point Go's SSL_CERT_DIR at that
+          # copied-CA dir. Default ca-certificates.crt bundle still loads, so ghcr's public roots work.
+          # Grant the network.host entitlement so the build can run RUN steps on the host (pod) network
+          # — buildkit's own CNI bridge defaults to MTU 1500, which blackholes large downloads over the
+          # 1450 pod overlay; `network: host` on the build below rides eth0 (1450) instead.
+          buildkitd-flags: --allow-insecure-entitlement network.host
+          driver-opts: |
+            env.SSL_CERT_DIR=/etc/ssl/certs:/etc/buildkit/certs/rust-mirror:443
+          buildkitd-config-inline: |
+            [registry."rust-mirror:443"]
+              ca = ["${{ github.workspace }}/.ci/harbor-ca.crt"]
+      - name: Write Harbor robot creds to docker config
+        env:
+          HARBOR_ROBOT_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_ROBOT_TOKEN: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+        run: |
+          # No `docker login`: the dind daemon doesn't trust the Harbor private CA, so a login
+          # handshake x509-fails. buildx pushes via buildkit (which TLS-trusts Harbor through the
+          # ca=/SSL_CERT_DIR config below) and only needs the creds on disk. Never echo the secret.
+          mkdir -p "$HOME/.docker"
+          auth=$(printf '%s:%s' "$HARBOR_ROBOT_USER" "$HARBOR_ROBOT_TOKEN" | base64 -w0)
+          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "${{ env.REGISTRY }}" "$auth" > "$HOME/.docker/config.json"
+      - name: Build + push sentient-builder
+        id: build
+        env:
+          # buildctl (the buildx CLI, in THIS runner) fetches the Harbor /service/token directly —
+          # not the buildkit daemon — so daemon-side trust never covered it. Add the Harbor CA to the
+          # CLIENT's Go cert pool via SSL_CERT_DIR (colon-appended; the default ca-certificates.crt
+          # bundle FILE still loads, so ghcr's public roots keep working). Go reads every file in the
+          # dir and skips non-PEM, so pointing at ci/ (which holds harbor-ca.crt) is safe.
+          SSL_CERT_DIR: /etc/ssl/certs:${{ github.workspace }}/.ci
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: .ci/Dockerfile
+          push: true
+          # RUN steps on the host (pod) network so rustup's large downloads use eth0 (MTU 1450), not
+          # buildkit's internal 1500 bridge which blackholes them over the overlay.
+          network: host
+          add-hosts: ${{ env.KELLNR_HOST }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/sentient-builder:latest
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/sentient-builder:${{ github.sha }}
+      - name: Summary
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          GIT_SHA: ${{ github.sha }}
+        run: echo "## sentient-builder \`$DIGEST\` ($GIT_SHA)" >> "$GITHUB_STEP_SUMMARY"
+
+  # Derived image, FROM the sentient-builder just pushed at this SHA. A `matrix` of one (rather
+  # than a plain job) is kept so a future second derived image slots back in without restructuring.
+  derived:
+    name: build ${{ matrix.image }}
+    needs: base
+    # arc-dind — same as the base job.
+    runs-on: arc-dind
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: sentient-yocto-builder
+            file: .ci/yocto.Dockerfile
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          # Self-contained Harbor trust for the buildkit builder (see base job).
+          # network.host entitlement so RUN steps can use the pod network (MTU 1450) — see base job.
+          buildkitd-flags: --allow-insecure-entitlement network.host
+          driver-opts: |
+            env.SSL_CERT_DIR=/etc/ssl/certs:/etc/buildkit/certs/rust-mirror:443
+          buildkitd-config-inline: |
+            [registry."rust-mirror:443"]
+              ca = ["${{ github.workspace }}/.ci/harbor-ca.crt"]
+      - name: Write Harbor robot creds to docker config
+        env:
+          HARBOR_ROBOT_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_ROBOT_TOKEN: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+        run: |
+          # No `docker login`: the dind daemon doesn't trust the Harbor private CA, so a login
+          # handshake x509-fails. buildx pushes via buildkit (which TLS-trusts Harbor through the
+          # ca=/SSL_CERT_DIR config below) and only needs the creds on disk. Never echo the secret.
+          mkdir -p "$HOME/.docker"
+          auth=$(printf '%s:%s' "$HARBOR_ROBOT_USER" "$HARBOR_ROBOT_TOKEN" | base64 -w0)
+          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "${{ env.REGISTRY }}" "$auth" > "$HOME/.docker/config.json"
+      - name: Build + push ${{ matrix.image }}
+        id: build
+        env:
+          # Client-side Harbor CA trust for buildctl's token fetch (see base job).
+          SSL_CERT_DIR: /etc/ssl/certs:${{ github.workspace }}/.ci
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          push: true
+          # RUN steps on the host (pod) network (MTU 1450) — see base job.
+          network: host
+          add-hosts: ${{ env.KELLNR_HOST }}
+          build-args: |
+            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.NAMESPACE }}/sentient-builder:${{ github.sha }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ matrix.image }}:latest
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ matrix.image }}:${{ github.sha }}
+      - name: Summary
+        env:
+          IMAGE: ${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          GIT_SHA: ${{ github.sha }}
+        run: echo "## $IMAGE \`$DIGEST\` ($GIT_SHA)" >> "$GITHUB_STEP_SUMMARY"

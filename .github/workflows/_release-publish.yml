@@ -1,0 +1,225 @@
+name: _release-publish (reusable)
+
+# Reusable workflow — publish the GitHub Release. Called by production.yml, which gates the call
+# (only a real v-tag push or an auto-cut dispatch with publish=true reaches this) and passes:
+#   version — the dispatch `version` input ('' on tag pushes; extracted from the ref here)
+#   tier    — validate-signing's output: 'release' (signer chains to CA_CRT ⇒ full release) or
+#             'prerelease' (valid signature, self-signed cert ⇒ GitHub pre-release)
+#
+# Downloads every artifact the build/sysext lanes uploaded, aggregates + signs checksums
+# (X.509 CMS per-binary + keyless cosign on SHA256SUMS), generates notes (git-cliff, with
+# GitHub-auto-notes fallback), publishes via softprops, and hard-verifies the published release
+# against .ci/release-required-assets.txt (the same list promote.yml checks).
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version WITHOUT leading v (dispatch path). Empty on tag pushes (extracted from the ref).
+        type: string
+        required: false
+        default: ''
+      tier:
+        description: Signing tier from validate-signing ('release' or 'prerelease').
+        type: string
+        required: true
+    secrets:
+      SIGNING_KEY:
+        required: false
+      SIGNING_CRT:
+        required: false
+      CA_CRT:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish GitHub Release
+    permissions:
+      contents: write
+      id-token: write
+    runs-on: arc-runner-set
+    # openssl (X.509 CMS signing), cosign, and git-cliff are all baked into sentient-builder
+    # (.ci/Dockerfile) — this job no longer needs a separate plain-ubuntu container just to avoid
+    # pulling in a Rust toolchain for them; sentient-builder now bakes all three regardless.
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          # NOTE: no `pattern` — a prior `pattern: sentient-*` did not match ANY upload-artifact
+          # `name:` (bin-rpi-*) and silently downloaded nothing. No pattern downloads every
+          # artifact from this workflow run, which is exactly the RPi/base+sysext set this
+          # release wants.
+          path: artifacts
+          merge-multiple: true
+
+      - name: Aggregate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artifacts
+          # bin-rpi-*.sha256 covers both the glibc matrix (build job) and the musl artifact
+          # (build-musl job, name bin-rpi-linux-arm64-musl) since both use the bin-rpi-* prefix.
+          # sentient-image-*.sha256 is the pulled-base checksum manifest (generated in the sysext
+          # job's "Merge pulled base into dist" step). sentient-app-*.sha256 is the signed app
+          # sysext's own checksum manifest (generated in the sysext job's "Stage sysext artifact"
+          # step).
+          cat bin-rpi-*.sha256 sentient-image-*.sha256 sentient-app-*.sha256 > SHA256SUMS 2>/dev/null || \
+            cat bin-rpi-*.sha256 > SHA256SUMS || true
+          ls -lh
+
+      # X.509 CMS detached signature of each runnable binary, against our self-signed CA
+      # (SIGNING_KEY/SIGNING_CRT signer + CA_CRT trust anchor). The on-device pre-start gate
+      # (distro/deploy/verify-binary.sh) runs `openssl cms -verify … -CAfile /etc/sentient/ca.crt`
+      # against the <bin>.p7s before systemd starts the service. openssl is present in sentient-builder.
+      - name: Sign RPi binaries (X.509 CMS)
+        uses: ./.github/actions/cms-sign
+        with:
+          signing-key: ${{ secrets.SIGNING_KEY }}
+          signing-crt: ${{ secrets.SIGNING_CRT }}
+          ca-crt: ${{ secrets.CA_CRT }}
+          working-directory: artifacts
+          # Only the stripped runnable binaries (bin-rpi-<slug>), never the .elf/.tar.gz/.sha256/
+          # .sbom.json/.p7s/.pem siblings — those match `bin-rpi-*` too but aren't what runs.
+          files: bin-rpi-*
+          exclude-pattern: "*.elf *.tar.gz *.sha256 *.sbom.json *.p7s *.pem"
+
+      # Keyless Sigstore signing of the aggregate checksums for release provenance (ambient GitHub
+      # Actions OIDC via the job's `id-token: write`). Separate from the X.509 CMS signatures, which are
+      # the on-device verification path (distro/deploy/verify-binary.sh) and stay key-based by design.
+      # cosign is baked into sentient-builder — no per-run installer action. Signing itself still talks
+      # to the public Sigstore Fulcio/Rekor infra over the network, so keep this resilient: a failure
+      # here must not abort the release — SHA256SUMS alone still provides integrity.
+      - name: Sign checksums with cosign (keyless)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artifacts
+          # cosign 3.x dropped the detached --output-certificate/--signature path — it now emits a
+          # single Sigstore bundle (cert + sig + Rekor entry). Verify with:
+          #   cosign verify-blob --bundle SHA256SUMS.cosign.bundle …  (docs/signing-and-verification.md)
+          cosign sign-blob --yes --bundle SHA256SUMS.cosign.bundle SHA256SUMS
+
+      # Version: strip it from the tag ref on a tag push, else take the caller-forwarded `version`
+      # input (the auto-cut path). Passed via env, never interpolated into the shell (zizmor
+      # template-injection).
+      - name: Extract version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            V="${GITHUB_REF#refs/tags/v}"
+          else
+            V="${INPUT_VERSION}"
+          fi
+          [ -n "$V" ] || { echo "::error::no version — a publish dispatch needs the version input set"; exit 1; }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      # Notes for the tag being released, generated from cliff.toml against the *full* repo
+      # history (fetch-depth: 0 above) so the categorized changelog and this release's notes stay
+      # in sync. `--strip header` drops the "# Changelog" doc header — a GitHub Release body
+      # shouldn't repeat that, only the "## [x.y.z] - date" section and its groups.
+      - name: Generate release notes (git-cliff)
+        continue-on-error: true
+        shell: bash
+        run: |
+          # The container user differs from the checkout owner → git refuses the repo without this.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git-cliff --config cliff.toml --latest --strip header --output RELEASE_NOTES.md
+
+      # Fall back to GitHub's auto-notes if git-cliff produced nothing (install or generate failed).
+      - name: Determine notes source
+        id: notes
+        shell: bash
+        run: |
+          set -eu
+          if [ -s RELEASE_NOTES.md ]; then
+            echo "have_cliff=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_cliff=false" >> "$GITHUB_OUTPUT"
+            echo "git-cliff notes unavailable — falling back to GitHub auto-generated release notes."
+          fi
+
+      - name: Create release
+        id: create_release
+        # softprops uploads assets concurrently and, on this self-hosted infra, its "asset already
+        # exists -> refresh + retry" path races the metadata update and 404s ("Not Found -
+        # update-a-release-asset"), failing the STEP even though the release + every asset uploaded
+        # fine (observed on run 29447780490: release published complete, job red). The `files:` globs
+        # below are now de-overlapped so no file is offered twice (that was the trigger); this
+        # continue-on-error + the hard Verify step after it are the safety net so a transient upload
+        # race can't red a genuinely-complete release, while a genuinely-incomplete one still fails.
+        continue-on-error: true
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          # A workflow_dispatch run's github.ref is a BRANCH (refs/heads/main), not a tag, so the
+          # action has nothing to attach the release to ("GitHub Releases requires a tag"). Give it
+          # the tag explicitly; the action creates it (pointing at this commit) if it doesn't exist.
+          # On a real v-tag push this reconstructs the SAME tag (Extract version sets `version` =
+          # ref minus `refs/tags/v`), so it's correct for both trigger paths.
+          tag_name: v${{ steps.version.outputs.version }}
+          name: sentient-rs v${{ steps.version.outputs.version }}${{ inputs.tier == 'prerelease' && ' (pre-release — self-signed)' || '' }}
+          body_path: ${{ steps.notes.outputs.have_cliff == 'true' && 'RELEASE_NOTES.md' || '' }}
+          generate_release_notes: ${{ steps.notes.outputs.have_cliff != 'true' }}
+          draft: false
+          # Full release only when the signer chains to CA_CRT; a self-signed (e.g. CN=example.local)
+          # signer still produces valid signatures but publishes as a GitHub pre-release.
+          prerelease: ${{ inputs.tier == 'prerelease' }}
+          # Ship, per RPi target (glibc matrix + the musl static artifact, both bin-rpi-* prefixed):
+          # the stripped binary, the unstripped .elf (symbols), the .tar.gz, the SBOM, and the X.509
+          # CMS detached signature (.p7s); per shipping MACHINE (post sysext-split): the PRE-SIGNED
+          # BASE OS image pulled from the MinIO golden store (sentient-image-<machine>.wic(.bz2) +
+          # its .p7s, built/signed once by image.yml/_yocto.yml — NOT rebuilt here) AND the
+          # freshly-built, freshly-signed APP
+          # sysext extension (sentient-app-<machine>.raw + its .p7s, built/signed by the sysext lane
+          # from this release's bin-rpi); plus the aggregate SHA256SUMS + cosign bundle, and the
+          # signer cert + CA (signing-cert.pem / ca.pem) so a verifier can check any .p7s:
+          #   openssl cms -verify -binary -content <file> -in <file>.p7s -inform DER -CAfile ca.pem
+          # NON-OVERLAPPING globs — each artifact must be offered EXACTLY once. The prefix globs
+          # already cover every sibling (`bin-rpi-*` -> the .elf/.p7s/.sbom.json/.sha256/.tar.gz;
+          # `sentient-image-*`/`sentient-app-*` -> their .wic.bz2/.raw/.p7s/.sha256), so the old broad
+          # `*.p7s` / `*.sbom.json` lines RE-matched those same files and made softprops upload them
+          # twice -> "already exists (race condition)" -> the metadata-refresh 404 that reddened the
+          # job. (`*.spdx.json` matched nothing and only emitted a warning.) All .p7s/.sbom.json are
+          # bin-rpi-/sentient-image-/sentient-app- prefixed, so the prefix globs lose no coverage.
+          # The two cargo-audit/cargo-deny evidence files are target-agnostic (`sentient-rs.cargo-*`,
+          # not bin-rpi-/sentient-image-/sentient-app- prefixed) so they need their own line — see
+          # docs/rust-hardening.md.
+          # artifacts/mcu-firmware-* — the MCU chip matrix's ELF(s) (_mcu-build.yml, story #366).
+          # Attached for HIL/inspection but deliberately NOT in .ci/release-required-assets.txt: it's
+          # not yet a signed/verified-boot shipping image (Gate-0 secure bootloader is #351,
+          # deferred), so its absence must not fail verify-release-assets.sh or promote.yml. A glob
+          # that matches nothing is a documented no-op here (see the *.spdx.json note above).
+          files: |
+            artifacts/bin-rpi-*
+            artifacts/sentient-image-*
+            artifacts/sentient-app-*
+            artifacts/mcu-firmware-*
+            artifacts/SHA256SUMS
+            artifacts/SHA256SUMS.cosign.bundle
+            artifacts/signing-cert.pem
+            artifacts/ca.pem
+            artifacts/sentient-rs.cargo-audit.json
+            artifacts/sentient-rs.cargo-deny.jsonl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Hard gate on the ACTUAL published state — required-asset list shared with promote.yml via
+      # .ci/release-required-assets.txt; full rationale in the script header.
+      - name: Verify release published with all required assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: .ci/scripts/release/verify-release-assets.sh

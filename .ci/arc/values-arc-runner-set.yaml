@@ -1,0 +1,62 @@
+# arc-runner-set — gha-runner-scale-set 0.14.2 values, kubernetes containerMode (NO dind).
+#
+# Compile/test lanes run as JOB PODS pulled by the node's containerd (cached, IfNotPresent) — no
+# per-job dind daemon, no multi-GB image re-pull. dind is retired here; it lives ONLY in the separate
+# `arc-dind` scale set used by builder-image.yml.
+#
+# IMPORTANT: use containerMode.type: kubernetes (NOT an empty containerMode + hand-rolled template).
+# The chart shortcut auto-creates the RBAC Role+RoleBinding the k8s container hook needs to CREATE
+# job pods, plus the work-volume claim. An empty containerMode skips that RBAC → "Initialize
+# containers" fails with "The Service account needs permissions ... on the pod resource". The
+# `template` section below only LAYERS extras (the /ci-cache hook mount + topology); the chart merges
+# them into its generated k8s-mode runner spec.
+#
+# Apply:
+#   helm upgrade arc-runner-set \
+#     oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set \
+#     --version 0.14.2 -n arc-runners -f ~/arc/values-arc-runner-set.yaml
+#
+# PREREQUISITES (already done this migration): secret arc-runner-set-github, configmap
+# arc-hook-ci-cache, node containerd Harbor CA trust (registries.yaml on both nodes).
+
+githubConfigUrl: https://github.com/High-Velocity-Decisions
+githubConfigSecret: arc-runner-set-github   # pre-created Secret — token not stored here
+minRunners: 5
+maxRunners: 10
+
+containerMode:
+  type: "kubernetes"                         # <- auto RBAC + work volume + k8s hook wiring
+  kubernetesModeWorkVolumeClaim:
+    accessModes: ["ReadWriteOnce"]           # per-runner _work; job pod pins to the runner's node
+    storageClassName: "local-path"
+    resources:
+      requests:
+        storage: 20Gi
+
+template:
+  spec:
+    # Balance runners across both nodes (was a live kubectl patch; now declarative).
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            actions.github.com/scale-set-name: arc-runner-set
+    containers:
+      - name: runner
+        image: ghcr.io/actions/actions-runner:latest
+        command: ["/home/runner/run.sh"]
+        env:
+          # Merge the shared NFS ci-cache PVC into each job pod (see hook-template-ci-cache.yaml).
+          # The chart already sets ACTIONS_RUNNER_CONTAINER_HOOKS / POD_NAME / REQUIRE_JOB_CONTAINER
+          # for kubernetes mode; we only add the hook-extension template pointer here.
+          - name: ACTIONS_RUNNER_CONTAINER_HOOK_TEMPLATE
+            value: /home/runner/pod-templates/default.yaml
+        volumeMounts:
+          - name: pod-templates
+            mountPath: /home/runner/pod-templates
+    volumes:
+      - name: pod-templates
+        configMap:
+          name: arc-hook-ci-cache

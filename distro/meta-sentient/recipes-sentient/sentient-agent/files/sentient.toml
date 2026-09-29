@@ -1,0 +1,37 @@
+# Sentient METEOR adapter — device configuration.
+# Override any field via SENTIENT_ env vars (nested with `__`), e.g.
+#   SENTIENT_SERIAL__PORT=/dev/ttyUSB0  SENTIENT_DEVICE__ID=METEOR-002
+# Day-1 Sentient-provided values for the private-cloud bridge (host/port/username/ca_file) go in
+# the [cloud] section below once #18 lands — see distro/deploy/config.example.toml for a filled-in
+# example and docs/deployment.md §9 for the onboarding runbook. The bridge PASSWORD is never a
+# TOML field; it lives only in the CLOUD_MQTT_PASS secret env var (distro/deploy/cloud.env.example).
+
+[device]
+id = "METEOR-001"
+
+[serial]
+kind = "rs485"        # rs232 | rs485
+port = "/dev/ttyAMA0"
+baud = 19200
+parity = "none"       # none | even | odd
+stop_bits = 1
+read_timeout_ms = 1000   # per-exchange read deadline; a silent bus yields IoError::Timeout, not a hang
+
+[poll]
+dip_addresses = [0]   # Seplos DIP addresses to poll each cycle
+interval_ms = 1000
+fault_every = 10      # poll 0x44 fault flags every N cycles (0 = never)
+
+[broker]
+# Loopback by default: only the local mosquitto bridge reads from this broker. Widen deliberately.
+host = "127.0.0.1"    # embedded MQTT server bind; mosquitto bridge connects here
+port = 1883
+
+[publish]
+prefix = "tms"        # topic prefix: {prefix}/{device_id}/{snake_case_topic}
+
+# [cloud]                                  # absent by default: a local-only device without this
+# host = "mqtt.sentient.example"           # section still boots fine (no cloud-relay bridge).
+# port = 8883                              # Uncomment + fill in once Sentient (#18) provides the
+# username = "METEOR-001"                  # endpoint + creds. Password is NEVER here — see
+# ca_file = "/etc/sentient/cloud-ca.pem"   # /etc/sentient/cloud.env (CLOUD_MQTT_PASS).

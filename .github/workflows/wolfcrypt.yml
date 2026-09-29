@@ -1,0 +1,82 @@
+name: wolfcrypt (std bring-up)
+
+# Separate build ledger for the `lib-security` wolfCrypt backend (`feature = "wolfcrypt"`,
+# std/non-FIPS tier). NOT part of the main CI gate (ci.yml): the feature requires a system wolfSSL
+# 5.9.1+ built from the `High-Velocity-Decisions/wolfssl-fork`, which is NOT available in the
+# sentient-builder image the main gate uses — it is built from source, in-job, below.
+#
+# Triggers on push to the `wolfcrypt-std-bringup` branch (so iterating on this bring-up is
+# self-checking) plus a manual `workflow_dispatch` — deliberately NOT on `pull_request`, so opening a
+# PR against main does not pull this job into the PR's required-checks surface.
+
+on:
+  push:
+    branches: [wolfcrypt-std-bringup]
+  workflow_dispatch:
+
+# Bring-up branch iterates fast — cancel a superseded run rather than queue behind it.
+concurrency:
+  group: wolfcrypt-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # `wolfssl-wolfcrypt`'s build.rs resolves BOTH the bindgen include dir and the link-search dir from
+  # `WOLFSSL_PREFIX` (see its `wolfssl_include_dir()`/`wolfssl_lib_dir()` — it does NOT use
+  # pkg-config, so no PKG_CONFIG_PATH is needed). `./configure` (no `--prefix`) defaults to
+  # `/usr/local`, matching `make install` below. NOTE: the crate does NOT vendor wolfSSL — it links a
+  # PREBUILT one, which is exactly what the "Build wolfSSL" step produces; this env is what wires the
+  # two together.
+  WOLFSSL_PREFIX: /usr/local
+  # `ldconfig` (below) registers /usr/local/lib in the runtime loader cache, but this is set too as a
+  # belt-and-suspenders for the `cargo test` step, which runs the compiled test binary directly (the
+  # crate links libwolfssl.so).
+  LD_LIBRARY_PATH: /usr/local/lib
+
+jobs:
+  wolfcrypt-std:
+    name: wolfCrypt std bring-up (lib-security)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/docker-hub/library/rust:latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      # wolfssl-wolfcrypt's build.rs shells out to `bindgen`, which needs libclang; the wolfSSL C
+      # build below needs the autotools chain plus a C/C++ toolchain.
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y autoconf automake libtool make gcc clang libclang-dev pkg-config
+
+      # Build the linkable wolfSSL 5.9.1 from the public fork (std tier — no --enable-fips here;
+      # FIPS bring-up is a separate ledger). `--enable-all` is the simplest superset to get every
+      # algorithm this backend touches (RNG, SHA-256/384/512, ECC, Ed25519, RSA) built in; narrow
+      # once the seam is confirmed working.
+      - name: Build wolfSSL (High-Velocity-Decisions/wolfssl-fork)
+        run: |
+          git clone --depth 1 https://github.com/High-Velocity-Decisions/wolfssl-fork.git /tmp/wolfssl
+          cd /tmp/wolfssl
+          ./autogen.sh
+          ./configure --enable-all
+          make -j"$(nproc)"
+          make install
+          ldconfig
+
+      # NB: no `--locked`. Enabling `--features wolfcrypt` pulls wolfssl-wolfcrypt's heavy build-time
+      # closure (bindgen, clang-sys, …) that the committed Cargo.lock does not carry, and we
+      # deliberately do NOT commit it: this is a separate, non-gating bring-up ledger, and adding
+      # those crates to the shared lock would make the main gate's cargo-audit / cargo-deny newly
+      # evaluate them. Letting cargo resolve them at build time here keeps that closure out of the
+      # committed lock. Lock-reproducibility is not required for this experiment.
+      - name: cargo build -p lib-security --features wolfcrypt
+        run: cargo build -p lib-security --features wolfcrypt
+
+      - name: cargo test -p lib-security --features wolfcrypt
+        run: cargo test -p lib-security --features wolfcrypt

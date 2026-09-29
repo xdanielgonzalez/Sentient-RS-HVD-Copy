@@ -1,0 +1,69 @@
+# bin-rpi-platform — the Raspberry Pi (Yocto/std+tokio) platform impl, extracted from impl-app's
+# former `host` module (ADR 0009, WS3). Symmetric peer of bin-zephyr-platform: depends on spec-app
+# (the contract) but takes NO impl-app dependency, normal or dev — the ADR's dependency inversion.
+
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "bin-rpi-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "The Raspberry Pi (Yocto/std+tokio) platform impl of the app's seams: embedded rumqttd broker + tokio-serial transport + tokio clock — symmetric peer of bin-zephyr-platform. Depends on spec-app (the contract), never on impl-app (the policy)."
+
+[dependencies]
+# The app contract (ADR 0009): Platform/RunConfig/Health + preflight. spec-app declares no
+# [features], so the default-features-inheritance trap direct-path deps elsewhere exist to avoid
+# does not apply here — `workspace = true` is safe.
+spec-app = { workspace = true }
+# Host serial transport + persist (raw wire-capture, jsonl disk log): both `lib_io::host` and
+# `lib_io::persist` are gated behind lib-io's `host` feature, which is also its `default`.
+lib-io = { workspace = true, default-features = true }
+# `lib_parse::canonical` (the vendor-neutral model) is all this crate's own code names directly;
+# carried features mirror the former `impl-app` `host` feature's set.
+lib-parse = { workspace = true, default-features = false, features = ["seplos", "std"] }
+# The sole canonical<->TMS boundary; `legacy` (implies `std`) for `GreengrassTap`'s merged flat
+# AWS-Greengrass JSON (Scope D, #52-#54, #269).
+lib-mapping = { workspace = true, default-features = true, features = ["legacy"] }
+# The embedded broker's publisher handle (`BrokerPublisher`) this platform's `emit_*` seam publishes
+# through.
+lib-mqtt = { workspace = true }
+# The owned DDS/RTPS (MIL-STD-3071) transport seam (#324, WP6): `DdsTap` renders XCDR2 via
+# `lib_mapping::render_cdr` and enqueues onto a `lib_dds::DdsHandle` (the bytes-in seam) — this
+# crate never touches the dust_dds backend directly. Default features (`backend-dustdds`) are fine
+# here: bin-rpi-platform is Pi-only (std/tokio), never linked by the MCU.
+lib-dds = { workspace = true }
+# Mesh-radio publish target + multi-tier location tagging — the host publish modules of lib-net.
+lib-net = { workspace = true, features = ["host"] }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+# systemd Type=notify watchdog + readiness (host only; no-op if not under systemd).
+sd-notify = { workspace = true }
+serde = { workspace = true }
+# `impl_greengrass_tap`'s `render_reading` returns `serde_json::Result<Vec<u8>>` (the same error
+# type `lib_mapping::legacy::battery_payload` returns) so a render failure's `Display` can be
+# logged without this crate re-wrapping it into its own error string.
+serde_json = { workspace = true }
+heapless = { workspace = true }
+log = { workspace = true }
+# Hot-path profiling (Pi-only, off by default — see the `hotpath`/`hotpath-cpu`/`hotpath-alloc`
+# features below): optional so the default `just lint`/`cargo clippy --workspace --all-targets`
+# build never links it. Gates `HostPlatform::emit_reading`/`emit_fault`/`publish_rendered_tapped`'s
+# `#[cfg_attr(feature = "hotpath", hotpath::measure)]` annotations in `impl_host_platform.rs`.
+hotpath = { version = "0.21", optional = true }
+
+# `host_platform_resilience.rs` (HostPlatform::build_port resilience, bug #172) constructs a real
+# BrokerConfig against a real embedded broker — the same `lib-mqtt` normal dependency above, no
+# extra dev-only edge needed (unlike the old impl-app::host arrangement, where `host` was only a
+# feature and lib-mqtt was optional/dev-gated).
+
+[features]
+# Off by default; Pi-only (see CLAUDE.md "Platform & Deployment"). `hotpath-cpu`/`hotpath-alloc` are
+# additive on top of the base `hotpath` feature, mirroring the hotpath v0.21 crate's own layout.
+hotpath = ["dep:hotpath", "hotpath/hotpath"]
+hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+
+[lints]
+workspace = true

@@ -1,0 +1,237 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "lib-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "The device's consolidated network layer (#287): one dual-target crate folding the former lib-mesh, lib-locate, lib-link, lib-channel, and lib-net-embassy into feature-gated modules. host/std publish targets (mesh + locate) and the no_std owned-net MCU stack (channel + link + the embassy-net spike) live side by side, gated so neither target absorbs the other's deps."
+
+[dependencies]
+# --- always-compiled no_std base: the `channel` inter-stage contract + boundary messages ---
+# heapless-only (no std, no alloc); every other module builds on this. Kept non-optional because it
+# adds no external crate a lib-net consumer doesn't already carry (heapless is workspace-wide).
+heapless = { workspace = true }
+
+# --- `link` module: the owned L2 driver + smoltcp L3/L4 stack (no_std core) ---
+# The owned stack: no_std, no-alloc TCP/IP driven by the WireFrame channels. Optional so the host
+# publish-target build (mesh/locate only) never pulls smoltcp.
+smoltcp = { workspace = true, default-features = false, features = [
+    "medium-ethernet",
+    "proto-ipv4",
+    "socket-tcp",
+], optional = true }
+# host (Linux) L2 driver via `pnet` (AF_PACKET) — `link-host`; plus tokio-serial (mesh/locate). tokio
+# is shared by `link-host`, `mesh`, and `locate`.
+tokio = { workspace = true, optional = true }
+pnet_datalink = { workspace = true, optional = true }
+# TLS record layer (`link::tls`) over rustls (non-FIPS `ring` provider) — `tls`. Host/std-only.
+rustls = { workspace = true, optional = true }
+# The provider seam (`KeyStore`/custody model) `link::tls_identity` is built on (`tls`), and the
+# `SessionCipher` seam `channel::crypto_stage::CryptoStage` rides (`crypto`). Both features share
+# this one optional dep; `features = ["software"]` (not `std`) keeps it no_std-clean so `crypto`
+# alone never pulls in lib-security's `std` feature — only `tls` (which already implies `std` for
+# rustls) does that, via the workspace `default-features = false` pin on this dep.
+lib-security = { workspace = true, optional = true, features = ["software"] }
+
+# --- `mesh` module: no_std/no-alloc codec (both targets) + `locate` module: std/host publish
+# target (RPi deployment) ---
+# mesh condenses a CanonicalReading (+ optional CanonicalFault, + optional LocationFix under
+# `locate`) into a bounded on-air frame. `default-features = false` (no `std`/`seplos`/`voltronic`)
+# keeps this no_std: `lib_parse::canonical` (CanonicalReading/CanonicalFault) is unconditional
+# there regardless of those features, so bare `mesh` never needs lib-parse's std feature.
+lib-parse = { workspace = true, default-features = false, optional = true }
+# GPS-NMEA serial reads (locate) + the mesh radio serial write path (`mesh-tokio`).
+tokio-serial = { workspace = true, optional = true }
+# mmcli `-J` JSON + IP-geolocation HTTP body parsing (locate tiers).
+serde_json = { workspace = true, features = ["std"], optional = true }
+log = { workspace = true, optional = true }
+# thiserror 1.0 is std-only (derives `std::error::Error`) — `RadioError` (the only user) lives
+# behind `mesh-tokio`, never bare `mesh`.
+thiserror = { workspace = true, optional = true }
+
+# --- `embassy::udp` host shim: the owned UDP/IPv6 transport seam's host-runner substrate ---
+# socket2 sets the pre-bind IPv6/reuse options + `IPV6_MULTICAST_IF` that std's `UdpSocket` lacks;
+# the socket is then converted to a `std::net::UdpSocket` for the safe (no_std-friendly, no
+# `MaybeUninit`) send/recv path. Host/std-only (`embassy-udp-host`); moved here from lib-dds so the
+# transport lives behind the owned net layer, never as raw sockets in the DDS consumer crate.
+socket2 = { workspace = true, optional = true }
+
+# --- `channel` `packed` codec: strict postcard/serde (de)serialization of the boundary messages ---
+serde = { workspace = true, optional = true }
+postcard = { workspace = true, default-features = false, optional = true }
+
+# --- `embassy` module: the embassy-net (0.9.1) owned-stack, NEW generation (no_std MCU) ---
+# Bumped 0.6.0 -> 0.9.1 (EPIC #350, story S8 #359) so `bin/mcu-rp2350` (embassy-rp 0.10 / embassy-time
+# 0.5.1 generation) can consume `lib-net`'s embassy seam DIRECTLY instead of forking bespoke W5500/
+# broker glue into the bin. The whole trio is now on the same generation as embassy-rp 0.10:
+# embassy-net 0.9.1 -> embassy-time 0.5.1, embassy-sync 0.8.0, embassy-net-driver 0.2.0,
+# embedded-io-async 0.7.0, heapless 0.9, smoltcp 0.13 (verified against the registry manifests).
+# `embassy-time-driver` carries `links = "embassy-time"`, so exactly ONE embassy-time resolves — now
+# 0.5 (root workspace pin), matching bin/mcu-rp2350's own 0.5.1. All optional so only `embassy` pulls them.
+embassy-net = { version = "0.9.1", default-features = false, features = [
+    "medium-ethernet",
+    "proto-ipv4",
+    "tcp",
+    # Dual-stack for the W5500/DDS leg (story #359, #328): `slaac` transitively pulls `proto-ipv6`
+    # + `multicast` and is what makes `Inner::apply_static_config` assign the interface its `fe80::`
+    # link-local address (gated `#[cfg(feature = "slaac")]`) + lets the seam call
+    # `stack.set_config_v6(ConfigV6::Slaac)` and `join_multicast_group` (SPDP ff02::1234). Listed
+    # explicitly alongside `slaac` for clarity even though it implies them.
+    "proto-ipv6",
+    "multicast",
+    "slaac",
+], optional = true }
+# NOTE: the former `heapless-embassy-net` (heapless 0.8) shim is GONE — embassy-net 0.9.1's
+# `StaticConfigV4::dns_servers` field is now `heapless::Vec` from heapless 0.9, which is this
+# workspace's own `heapless = "0.9"` pin, so `heapless::Vec::new()` (the always-compiled base dep
+# above) constructs it directly. No second heapless major in the graph anymore.
+embassy-net-driver-channel = { version = "0.4.0", default-features = false, optional = true }
+embassy-net-driver = { version = "0.2", default-features = false, optional = true }
+embassy-time = { workspace = true, optional = true }
+embassy-sync = { version = "0.8.0", default-features = false, optional = true }
+# embassy-net 0.9.1 implements its `TcpSocket` Read/Write over embedded-io-async 0.7 (was 0.6.1 in
+# 0.6.0), so the broker pump's `S: Read + Write` bound must be the SAME 0.7 traits or a real
+# `TcpSocket` won't satisfy it. Pinned directly to "0.7" here (NOT the workspace `embedded-io-async
+# = "0.6"` pin, which the host lib-io/std graph still uses) — different majors coexist (no `links`
+# key), and only `lib-net`'s embassy module uses this dep.
+embedded-io-async = { version = "0.7", optional = true }
+# W5500 Ethernet device leg (feature `embassy-wiznet`) — the on-board WIZnet W5500 as an embassy-net
+# `Device`/`Runner` pair, generic over the caller's `embedded-hal-async` SPI/GPIO (NO embassy-rp
+# types here — the HAL stays in the consuming bin). embassy-net-wiznet 0.3.0 pairs with embassy-net
+# 0.9.1 + embassy-time 0.5.1 (embassy-rs/embassy's own examples/rp pin this exact combination).
+embassy-net-wiznet = { version = "0.3.0", default-features = false, optional = true }
+# The `embedded-hal-async` SPI/GPIO traits the W5500 leg (and its BrokerListener/BrokerConn wiring)
+# are generic over — chip-agnostic, so lib-net never names a concrete HAL. Matches embassy-net-wiznet
+# 0.3.0's own `^1.0` requirement.
+embedded-hal-async = { version = "1.0", optional = true }
+# The blocking `embedded_hal::digital::OutputPin` the W5500 `RSTn` line is generic over (the wiznet
+# driver takes `RST: OutputPin`). Workspace pin (`^1.0`) — same version embassy-net-wiznet resolves.
+embedded-hal = { workspace = true, optional = true }
+# embassy-host bring-up proof (feature `embassy-host`) — std executor + tuntap driver. Bumped
+# 0.7 -> 0.10 (arch feature renamed `arch-std` -> `platform-std`; the compile-time `task-arena-size-*`
+# feature was REMOVED in 0.10, so it's no longer listed in the `embassy-host` feature below).
+embassy-executor = { version = "0.10", default-features = false, optional = true, features = [
+    "platform-std",
+    "executor-thread",
+] }
+embassy-net-tuntap = { version = "0.1.1", optional = true }
+static_cell = { version = "2", optional = true }
+embassy-futures = { version = "0.1", default-features = false, optional = true }
+
+[features]
+default = []
+
+# `std` marker — flips off the crate-level `#![no_std]`. Every std-family feature implies it, so the
+# no_std MCU path (`--no-default-features --features link,embassy`) never turns std on.
+std = []
+
+# ---- host / std publish targets (RPi deployment) ----
+# Multi-tier location service (GPS-NMEA / ModemManager / IP-geo / manual). std-only.
+locate = ["std", "dep:tokio", "dep:tokio-serial", "dep:serde_json", "dep:log", "dep:thiserror"]
+# Meshtastic mesh-radio CODEC — condensation (greedy JSON field packer, now with an optional
+# CanonicalFault input, #387) + the hand-rolled on-air protobuf + stream framing (#386's `to` fix).
+# no_std, no alloc: this is the portable part BOTH targets ride — the MCU takes only this feature
+# directly (WP3); the Pi rides it too, via `mesh-tokio` below (decision: one codec, not a
+# divergent std copy). Depends (in-crate) on nothing but `lib-parse` for the canonical types.
+mesh = ["dep:lib-parse"]
+# The Pi's tokio `run_radio` host loop (opens the serial port, rate-limits sends, reconnects with
+# backoff) + the `locate::LocationFix` tag on `condense`'s input (`CondenseInput::loc`, gated on
+# the `locate` feature at the type level too). std-only; the MCU never enables this.
+mesh-tokio = [
+    "mesh",
+    "std",
+    "locate",
+    "dep:tokio",
+    "dep:tokio-serial",
+    "dep:log",
+    "dep:thiserror",
+]
+# Umbrella for the RPi host publish targets (former lib-mesh + lib-locate).
+host = ["mesh-tokio", "locate"]
+
+# ---- owned-net stack (no_std MCU core + host-test seams) ----
+# The L2 driver + smoltcp stack + owned MQTT broker/client/session (no_std core).
+link = ["dep:smoltcp"]
+# Linux pnet/AF_PACKET L2 driver (former lib-link `host`). Requires CAP_NET_RAW at runtime. std.
+link-host = ["link", "std", "dep:tokio", "dep:pnet_datalink"]
+# TLS record-layer stage (`link::tls`) + identity seam (`link::tls_identity`) over rustls. std.
+tls = ["link", "std", "dep:rustls", "dep:lib-security"]
+
+# ---- embassy-net owned-stack (no_std MCU), NEW generation (embassy-net 0.9.1) ----
+embassy = [
+    "link",
+    "dep:embassy-net",
+    "dep:embassy-net-driver-channel",
+    "dep:embassy-net-driver",
+    "dep:embassy-time",
+    "dep:embassy-sync",
+    "dep:embedded-io-async",
+    "dep:embassy-futures",
+]
+# W5500 Ethernet device leg (EPIC #350, story S8 #359): the on-board WIZnet W5500 as an embassy-net
+# `Device`/`Runner` the existing adapter/Stack path consumes. Generic over the caller's
+# `embedded-hal-async` SPI/GPIO (the concrete embassy-rp HAL stays in `bin/mcu-rp2350`, never here).
+embassy-wiznet = ["embassy", "dep:embassy-net-wiznet", "dep:embedded-hal-async", "dep:embedded-hal"]
+# Host bring-up proof (former lib-net-embassy `host`): std executor + tuntap driver.
+embassy-host = [
+    "embassy",
+    "std",
+    "dep:embassy-executor",
+    "dep:embassy-net-tuntap",
+    "dep:static_cell",
+    "dep:log",
+    "dep:embassy-futures",
+    "embassy-time/std",
+]
+
+# ---- owned UDP/IPv6 transport seam (embassy-shaped) ----
+# The portable async seam: `UdpEndpoint` (async send/recv/local_addr) + `UdpError` + `UdpBindSpec`.
+# Pure `core::net`, no_std, alloc-free — pulls NONE of the embassy-net dep stack, so a std/host RTPS
+# consumer can enable it without compiling smoltcp/embassy-net. Shaped to match embassy-net 0.6.0's
+# UDP socket model so the MCU impl (#328) is a native drop-in (adds an embassy_net-backed impl under
+# a no_std feature that turns on embassy-net's udp/proto-ipv6/multicast).
+embassy-udp = []
+# The host-runner substrate (`HostUdpSocket`): std + socket2 over the kernel network stack. The Pi's
+# real UDP transport, since embassy/host's `build_stack` has no UDP-over-real-LAN substrate today
+# (IPv4/TCP over an isolated tuntap device). Consumed by lib-dds's RTPS TransportParticipantFactory.
+embassy-udp-host = ["embassy-udp", "std", "dep:socket2"]
+
+# ---- channel packed (postcard/serde) IPC codec ----
+packed = ["dep:serde", "dep:postcard", "heapless/serde"]
+
+# ---- channel::crypto_stage: the real seal/open leg of the [crypto/TLS] pipeline slot ----
+# `CryptoStage<C: SessionCipher>` — a thin `Stage` adapter over `lib-security`'s `SessionCipher`
+# seam (feature `software` there is the concrete AES-GCM backend). Deliberately does NOT list
+# `std` here (unlike `tls`, which needs it for rustls): the channel module is the always-compiled
+# no_std base, and `lib-security`'s `software` backend is itself no_std/no-alloc, so a bare
+# `--features crypto` build stays on the MCU-compatible path. Independent of `tls`/`tls_identity`
+# (the rustls record layer) — both simply happen to share the one optional `lib-security` dep.
+crypto = ["dep:lib-security"]
+
+# ---- channel::channel embassy-sync impls (no_std MCU, embassy-version-free) ----
+# Narrow on purpose: ONLY `dep:embassy-sync` (already an optional dep above, for the `embassy`
+# module's embassy-net spike — reused, not duplicated). Must NEVER imply `embassy`/`dep:embassy-net`
+# /`dep:embassy-time`: `bin/mcu-rp2350` (story #352) — an EXCLUDED workspace pinning `embassy-rp` 0.10 +
+# `embassy-time` 0.5 — is the crate that enables THIS feature directly (NOT `bin-mcu-platform`,
+# which stays on lib-net's plain default so its own host build never needs this feature at all).
+# `embassy-time-driver` carries `links = "embassy-time"`, so Cargo allows exactly ONE
+# `embassy-time` version per graph — this main workspace already pins `embassy-time = "0.4"` for
+# the `embassy` feature's embassy-net spike, so `channel-embassy` pulling in `embassy-time`
+# (transitively, via `embassy-net` or directly) would conflict the instant a consumer enabled both.
+# `embassy-sync` itself carries no `links` key, so multiple crates that only need channel/mutex
+# primitives (not the time driver) can each pick their own version freely.
+channel-embassy = ["dep:embassy-sync"]
+
+[dev-dependencies]
+# `#[tokio::test]` in link/mesh/locate in-source tests.
+tokio = { workspace = true }
+# channel `packed` round-trip tests + the mesh CanonicalReading fixture builder.
+heapless = { workspace = true, features = ["serde"] }
+# embassy `embassy-host` bring-up tests.
+env_logger = { workspace = true }
+static_cell = { version = "2" }
+
+[lints]
+workspace = true

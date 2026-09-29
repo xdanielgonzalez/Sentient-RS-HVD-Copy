@@ -1,0 +1,128 @@
+name: "Bug report"
+description: "Something is broken or behaves unexpectedly."
+title: "BUG: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: if this looks like memory/stack corruption on the MCU (a garbage PC, `Illegal
+        use of EPSR`, `Illegal load of EXC_RETURN into PC`), please capture a symbolized fault dump
+        (`addr2line` against the unstripped ELF) first — see CLAUDE.md "Cortex-M fault triage" and
+        "Bounded Debugging". A named function/line beats a hypothesis.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What's wrong?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. `just build-no-std` / `cargo test -p ...` / boot the qemuarm64 image / ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: dropdown
+    id: target
+    attributes:
+      label: Target / platform
+      description: Where did you observe this?
+      options:
+        - "Raspberry Pi (Yocto Linux / std+tokio, bin-rpi)"
+        - "MCU (Zephyr / no_std) — QEMU/Renode emulation"
+        - "MCU (Zephyr / no_std) — real hardware"
+        - "Host `cargo test` (no target)"
+        - "CI / build pipeline / other"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: affected_crates
+    attributes:
+      label: Affected crate(s)
+      description: Check all that apply, if known.
+      options:
+        - label: lib-parse
+        - label: lib-schema
+        - label: lib-mapping
+        - label: lib-io
+        - label: lib-mqtt
+        - label: lib-security
+        - label: lib-channel
+        - label: lib-link
+        - label: lib-net-embassy
+        - label: lib-preflight
+        - label: impl-app
+        - label: bin-rpi
+        - label: bin-zephyr-platform
+        - label: bin-zephyr
+        - label: test-kit / test-acceptance / test-e2e
+        - label: distro/ (Yocto)
+        - label: CI / workflows
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / fault dump
+      description: |
+        Paste relevant logs, panic output, or a Cortex-M fault dump. For a faulting PC/LR/return
+        chain, symbolize it with `addr2line` against the unstripped ELF before pasting — a raw
+        address is far less useful than the function/line it resolves to.
+      render: shell
+    validations:
+      required: false
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - "Critical — data loss, safety-relevant, or blocks a release"
+        - "High — broken core functionality, no workaround"
+        - "Medium — broken functionality, workaround exists"
+        - "Low — cosmetic / minor"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Regression?
+      options:
+        - "Yes — worked in a previous version (note it below)"
+        - "No — new / always broken"
+        - "Unknown"
+    validations:
+      required: true
+
+  - type: input
+    id: last_known_good
+    attributes:
+      label: Last known-good version/commit (if a regression)
+      placeholder: "e.g. v0.2.3 or a commit SHA"
+    validations:
+      required: false

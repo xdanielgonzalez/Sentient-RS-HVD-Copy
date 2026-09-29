@@ -1,0 +1,22 @@
+---
+source: crates/test-e2e/tests/e2e_l1.rs
+expression: dc_json
+---
+{
+  "device_id": "METEOR-001",
+  "external_measurement": [
+    {
+      "line": [
+        {
+          "amperage": 1.64,
+          "power": 87.3956,
+          "voltage": 53.29
+        }
+      ],
+      "port_number": 0,
+      "power_rate_of_change": null
+    }
+  ],
+  "internal_measurement": [],
+  "time_measured": "[time]"
+}

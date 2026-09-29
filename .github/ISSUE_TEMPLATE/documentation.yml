@@ -1,0 +1,28 @@
+name: "Documentation"
+description: "Something in the docs is wrong, missing, or unclear."
+title: "DOCS: "
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: whats_wrong
+    attributes:
+      label: What's wrong or missing
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: File(s)/section this applies to, or "doesn't exist yet" if it's a new page.
+      placeholder: "e.g. docs/deployment.md, README.md crate table, CLAUDE.md, a doc comment in crates/lib-io"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_change
+    attributes:
+      label: Proposed change
+      description: What should it say instead? A draft is welcome but not required.
+    validations:
+      required: false

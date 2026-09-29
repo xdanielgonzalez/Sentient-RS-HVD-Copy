@@ -1,0 +1,45 @@
+# pico-seplos-emu — the Pico Seplos BMS pack-emulator firmware (HIL bench, phase 1). Excluded from
+# the root sentient-rs workspace (see root Cargo.toml's `exclude` entry) — its own toolchain/
+# target (thumbv8m.main-none-eabihf, RP2350A/Cortex-M33), own Cargo.lock, never `cargo build --workspace`.
+# Mirrors bin/zephyr exactly. Standalone package (empty [workspace] table below) as a
+# belt-and-suspenders pairing with the root exclude entry — robust against nested-workspace
+# discovery ambiguity if this checkout is ever itself nested inside another Cargo-workspace
+# ancestor directory. All protocol logic lives in the sibling `pico-seplos-emu-core` crate (a REAL
+# sentient-rs workspace member — host-testable, zero embassy deps); this crate is UART0 hardware
+# binding only.
+[workspace]
+
+[package]
+name = "pico-seplos-emu"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Pico Seplos BMS pack-emulator firmware — HIL bench, phase 1. embassy-rp UART0 slave, canned telemetry via pico-seplos-emu-core."
+
+[dependencies]
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.5"
+embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread"] }
+embassy-rp = { version = "0.10.0", features = ["rp235xa", "time-driver", "critical-section-impl"] }
+embassy-time = "0.5.1"
+heapless = "0.9"
+panic-halt = "1.0.0"
+pico-seplos-emu-core = { path = "../pico-seplos-emu-core" }
+
+# no_std binary: no unwinding support (no eh_personality), so panic must abort in every profile.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = "s"
+debug = true
+
+# Mutes rust-analyzer's "can't find crate for `test`" on this no_std bin (matches
+# embassy-rp2040-template's own Cargo.toml convention) — no unit tests live in this crate; the
+# host-testable logic is entirely in pico-seplos-emu-core.
+[[bin]]
+name = "pico-seplos-emu"
+test = false
+bench = false

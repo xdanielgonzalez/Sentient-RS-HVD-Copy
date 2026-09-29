@@ -1,0 +1,17 @@
+# Compose twin of the chart's datasource provisioning (grafana-provisioning-configmap.yaml)
+# — only the influxdb URL differs (compose service DNS instead of the k8s Service).
+# Keep in sync with deploy/charts/sentient-viz.
+apiVersion: 1
+datasources:
+  - name: InfluxDB
+    uid: influxdb-telemetry
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: sentient
+      defaultBucket: telemetry
+    secureJsonData:
+      token: $__env{INFLUX_TOKEN}

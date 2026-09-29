@@ -1,0 +1,74 @@
+# DDS conformance harness (WP7a, story #321/#324): validate the MIL-STD-3071 DDS/RTPS surface of the
+# real bin-rpi adapter with the STOCK CycloneDDS Python CLI (cyclonedds ls/typeof/subscribe), driven
+# against the real seplos-tcp-sim.
+#
+#   podman-compose -f deploy/dds-conformance/compose.yaml up --abort-on-container-exit
+#     # (or: `podman compose ...` if your podman has the compose provider wired)
+#   podman-compose -f deploy/dds-conformance/compose.yaml down
+#
+# See deploy/dds-conformance/README.md for the full runbook + what each check proves.
+#
+# ─── Topology: ONE shared network namespace via `network_mode: host` ──────────────────────────
+# WHY host netns (not per-container bridged netns, not `service:adapter`):
+#   * SPDP discovery is IPv6 link-local MULTICAST on the custom group ff02::1234. That needs a real
+#     MULTICAST-flagged interface shared by publisher + subscriber. The host netns exposes eth0
+#     (MULTICAST) directly to every service — the exact substrate the WP0/WP4 spike used when it DID
+#     deliver a sample to CycloneDDS. lo has no MULTICAST flag, so a same-`service:` share pinned to
+#     lo cannot carry SPDP; rootless podman's per-container bridged netns does not reliably forward
+#     IPv6 link-local multicast between containers. Host netns removes that variable entirely.
+#   * Same netns => the adapter reaches the sim on 127.0.0.1:5001, and CycloneDDS reaches the
+#     adapter's unicast DATA locators (eth0 link-local) with no cross-netns routing.
+# COST (documented): services bind HOST ports (sim 5001, adapter broker 11883, RTPS 7400+). The
+# adapter broker is moved off the default 1883 for exactly this reason (see sentient-dds.toml).
+services:
+  # Seplos BMS simulator — TCP-serves the telemetry the adapter polls. Same image/pattern as the viz
+  # stack (deploy/docker/Dockerfile `sim` target, deploy/docker/sim-entrypoint.sh).
+  sim:
+    image: sentient-viz-sim:conformance
+    network_mode: host
+    environment:
+      SIM_PORT: "5001"
+      SIM_PACE: "19200"
+    restart: unless-stopped
+
+  # The real bin-rpi adapter built from THIS branch (deploy/docker/Dockerfile `app` target: static
+  # musl bin-rpi + socat pty<->tcp bridge to the sim). Config has `[dds]` => DDS/RTPS transport up
+  # alongside MQTT. iface/unicast_addr overridable per-host via the SENTIENT_DDS__* env below.
+  adapter:
+    image: sentient-viz-app:conformance
+    network_mode: host
+    environment:
+      SIM_HOST: "127.0.0.1" # host netns => sim is on loopback, not a compose service DNS name
+      SIM_PORT: "5001"
+      PTY_LINK: /tmp/ttySIM
+      RUST_LOG: "warn,bin_rpi=info,impl_app=info,lib_dds=debug,dust_dds=info"
+      SENTIENT_CONFIG: /etc/sentient/sentient.toml
+      # Per-host overrides (default matches configs/sentient-dds.toml for this dev machine):
+      SENTIENT_DDS__IFACE: "${DDS_IFACE:-eth0}"
+      SENTIENT_DDS__UNICAST_ADDR: "${DDS_UNICAST_ADDR:-fe80::215:5dff:fee2:3c1d}"
+    volumes:
+      - ./configs/sentient-dds.toml:/etc/sentient/sentient.toml:ro
+    depends_on: [sim]
+    restart: unless-stopped
+
+  # Stock CycloneDDS CLI conformance runner (tools.Dockerfile). Exits when run_conformance.sh
+  # finishes; `--abort-on-container-exit` then tears the whole stack down. Its exit code is the
+  # harness verdict (0 = all hard asserts pass).
+  conformance:
+    build:
+      context: ../..
+      dockerfile: deploy/dds-conformance/tools.Dockerfile
+    image: cyclonedds-conformance:local
+    network_mode: host
+    environment:
+      CYCLONEDDS_URI: "file:///config/cyclonedds.xml"
+      DDS_DOMAIN: "0"
+      DDS_DEVICE_ID: "METEOR-001"
+      DDS_WARMUP_SECS: "${DDS_WARMUP_SECS:-25}"
+      DDS_SCAN_SECS: "${DDS_SCAN_SECS:-8}"
+      DDS_SUB_SECS: "${DDS_SUB_SECS:-15}"
+      DDS_OUT_DIR: /out
+    volumes:
+      - ./configs/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./artifacts:/out
+    depends_on: [adapter]

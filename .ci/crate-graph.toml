@@ -1,0 +1,162 @@
+# Crate-graph architecture policy — an executable fitness function enforcing SOLID/clean-architecture
+# at the CRATE boundary. Checked by `.ci/scripts/crate_graph_audit.py` (via `just crate-graph`,
+# wired into `just lint` + CI `_lint.yml`).
+#
+# Why this exists: the `lib-*` count was growing faster than the domain count — aspects (disk IO,
+# preflight, the net spike) had calved off into their own top-level crates, fracturing the graph.
+# This policy makes adding a crate a deliberate, reviewed act and pins the dependency DIRECTION.
+#
+# Enforcement is SPLIT between a maintained tool and this thin manifest (see the tooling research):
+#   DIP / layering  — enforced by `cargo-deny` `[bans]` + `wrappers` in deny.toml (a maintained tool
+#                     already in the supply-chain gate; verified to apply to workspace path deps).
+#                     The `layer` fields below are documentation + DOT coloring, NOT enforced here.
+#   SRP / roster    — `crate_graph_audit.py --check`: every workspace member must be declared below
+#                     with a one-line `responsibility`. A new top-level crate fails CI until declared
+#                     → the reviewer asks "domain, or a one-off aspect that belongs as a module?"
+#   cohesion        — every library-shaped crate (`lib-*`, `spec-*`, `impl-*`, ...; non-bin, non-test)
+#                     must be reachable from a shipping binary (no orphans) — exclusion-based, not
+#                     prefix-based, so a non-`lib-` contract/policy crate is covered too.
+#
+# `known_debt` records crates that violate the target shape TODAY (aspects to consolidate, or an
+# orphan) with a `consolidate_into` target + tracking `issue`. The gate fails on NEW violations only
+# — the ratchet drives the reorg down, same as `.ci/scripts/typeimpl_audit.py`'s baseline.
+
+# Layer names (lowest first) — documentation + `just depgraph` node coloring. Direction is enforced
+# by cargo-deny, not by matching these indices.
+#
+# "contract" (ADR 0009, `docs/decisions/0009-spec-app-ports-and-adapters.md`): the Stable-
+# Abstractions stratum between "bridge" and "service" — a crate here depends only on foundation/
+# domain/bridge crates its signatures name, and everything from "service" up may depend on it.
+# `spec-app` is the first (and, so far, only) occupant.
+layers = ["foundation", "domain", "bridge", "contract", "service", "app", "platform", "bin", "test"]
+
+# Shipping-binary roots: every non-bin, non-test library-shaped crate must be reachable from at
+# least one of these.
+binary_roots = ["bin-rpi", "bin-mcu-platform"]
+
+# --- foundation: pure models + provider seams, heapless+serde only, no intra-workspace deps -------
+[crates.lib-canonical]
+layer = "foundation"
+responsibility = "Vendor-neutral canonical device model — changes only when a new device class appears."
+
+[crates.lib-tms]
+layer = "foundation"
+responsibility = "The generated MIL-STD-3071 (TMS) wire model — changes only when the standard revises."
+
+[crates.lib-security]
+layer = "foundation"
+responsibility = "Auth/cert/crypto behind one provider seam — changes only when the crypto contract does."
+
+# --- domain: protocol + IO over the foundation ----------------------------------------------------
+[crates.lib-parse]
+layer = "domain"
+responsibility = "BMS/inverter vendor protocol parsers producing the canonical model."
+
+[crates.lib-io]
+layer = "domain"
+responsibility = "Serial transport (RS-232/RS-485) behind one async trait, generic over the wire."
+
+# --- bridge: canonical <-> TMS mapping ------------------------------------------------------------
+[crates.lib-mapping]
+layer = "bridge"
+responsibility = "The sole canonical<->TMS boundary: transform + generated wire encoders + legacy."
+
+# --- contract: the stable, abstract spine (ADR 0009) --------------------------------------------
+[crates.spec-app]
+layer = "contract"
+responsibility = "The app contract: the Platform port + RunConfig/Health + preflight — depended on by impl-app (policy) and every platform adapter, itself depending on none of them."
+
+# --- service: outward-facing surfaces -------------------------------------------------------------
+[crates.lib-mqtt]
+layer = "service"
+responsibility = "The device's local MQTT broker/bridge surface."
+
+[crates.lib-net]
+layer = "service"
+responsibility = "The device's network layer: the no_std owned-net MCU stack (channel/link/embassy) + the host mesh-radio + location publish targets, feature-gated per target."
+
+[crates.lib-dds]
+layer = "service"
+responsibility = "The device's DDS/RTPS (MIL-STD-3071) transport for the Pi: an owned DdsParticipant/DdsWriter seam over a single dust_dds backend + custom UDP/IPv6 transport + Annex D.5 QoS translation. std/tokio, Pi-only."
+
+# --- app / platform / bin -------------------------------------------------------------------------
+[crates.impl-app]
+layer = "app"
+responsibility = "The shared adapter application: the poll->map->publish loop over the platform seams."
+
+[crates.bin-rpi-platform]
+layer = "platform"
+responsibility = "The RPi (Yocto/std+tokio) platform impl of the app's seams — symmetric peer of bin-mcu-platform."
+
+[crates.bin-mcu-platform]
+layer = "platform"
+responsibility = "The Embassy MCU platform impl of the app's seams (EPIC #350: MCU runtime pivot Zephyr -> Embassy) — embassy-version-free by construction; bin/mcu-rp2350 (excluded workspace) supplies the concrete embassy types."
+
+[crates.bin-rpi]
+layer = "bin"
+responsibility = "The Raspberry Pi (Yocto/std+tokio) shipping binary."
+
+# --- test ----------------------------------------------------------------------------------------
+[crates.test-kit]
+layer = "test"
+responsibility = "Consolidated test-support crate (sims, harness)."
+
+[crates.test-e2e]
+layer = "test"
+responsibility = "Cross-crate / full-pipeline end-to-end tests."
+
+[crates.test-acceptance]
+layer = "test"
+responsibility = "Cucumber acceptance suite."
+
+[crates.pico-seplos-emu-core]
+layer = "test"
+responsibility = "Pure Seplos BMS responder protocol logic for the Pico HIL-bench pack emulator (hil/pico-seplos-emu) — host-testable verification support, not a shipping path; the firmware binary that consumes it (hil/pico-seplos-emu) is excluded from the workspace, same as bin/mcu-rp2350."
+
+# --- known_debt: violate the target shape today; tracked for consolidation, do NOT block ----------
+# Each entry is allowed by the gate (won't fail) but is reported and must carry a consolidation
+# target + issue. New crates may NOT be added here without review; the list only shrinks.
+# All prior consolidation debt is now PAID — the aspect crates were folded into their domains:
+#   - lib-persist    -> lib-io::persist       (#285): host-gated JSONL/disk telemetry logging module.
+#   - lib-preflight  -> impl-app::preflight   (#286): no_std startup preflight-check module.
+#   - lib-mesh, lib-locate, lib-link, lib-net-embassy, lib-channel -> lib-net (#287): folded into the
+#     consolidated network crate as feature-gated modules. The embassy-net spike is kept as
+#     `lib_net::embassy` behind the `embassy` feature, still linked for thumbv7em by `just build-no-std`.
+#   - lib-dds transient orphan (#324, WP6): PAID — `bin-rpi-platform::DdsTap` + `bin-rpi`'s
+#     `runtime::supervise` (`run_dds_stack` + `tasks::dds::*`) now reach it from a shipping binary
+#     root; cohesion is real, not just built-and-governed. Do not add new crates here without
+#     review; the list only shrinks.
+
+# lib-store — RE-CLASSIFIED from `[crates.lib-store]`, not a new crate. Its shipping-path anchor
+# was the (now-deleted) bin-zephyr-platform CanonicalStore arena; the replacement bin-mcu-platform
+# Stage-1 emit path renders immediately (mirrors the old RemoteClient branch) and does not use it
+# yet, so it is a transient orphan until the MCU canonical-store pipeline lands under EPIC #350.
+[known_debt.lib-store]
+layer = "foundation"
+responsibility = "Bounded in-memory canonical telemetry store (render-on-output memory model) — pure no_std data over lib-canonical; the policy + every platform adapter depend on it, none on each other."
+consolidate_into = "bin-mcu-platform"
+issue = 350
+reason = "orphaned by the Zephyr retirement (EPIC #350, story #352); re-anchored when the MCU canonical-store pipeline lands (EPIC #350); impl-app keeps it as dev-dep for arena tests"
+
+# lib-profile — NEW orphan. Consumed only by the excluded bin/mcu-rp2350/ns firmware workspace.
+# The profiler framework (story #365) is feature-gated and zero-cost when OFF; wiring the three
+# measurement hotspots (poll-loop period, publish counter, DDS encode path) will re-anchor it to
+# bin-mcu-platform's shipping path via impl-app instrumentation under story #372.
+[known_debt.lib-profile]
+layer = "foundation"
+responsibility = "Span-timing aggregation for on-target profiling — a clock/sink-agnostic no_std span registry with feature-gated instrumentation macros."
+consolidate_into = "bin-mcu-platform"
+issue = 372
+reason = "consumed only by the excluded bin/mcu-rp2350/ns firmware workspace; re-anchored when the profiler is wired to the three measurement hotspots (poll-loop period, publish counter, DDS encode path) under issue #372"
+
+# lib-tls — NEW orphan. A deliberate stub of the rustls glue specified by ADR 0013
+# (docs/decisions/0013-transport-security-trust-store.md). The MCU is expected to move to
+# STM32H5 on FIPS grounds, so implementing TLS against the RP2350 now would be discarded work;
+# rustls is deliberately not yet even a dependency. Re-anchors to bin-mcu-platform's shipping path
+# when the transport-security implementation lands under issue #398.
+[known_debt.lib-tls]
+layer = "foundation"
+responsibility = "The rustls server-side TLS glue for the device-hosted MQTT broker — a no_std+alloc TlsServerStage and CryptoProvider routing all cryptographic operations through the lib-security trait seam rather than performing them locally."
+consolidate_into = "bin-mcu-platform"
+issue = 398
+reason = "currently a fail-closed stub with no consumer; rustls is deliberately not yet a dependency because UnbufferedServerConnection on Cortex-M is unexercised and gated on a measured footprint work package; re-anchors to the shipping path when the transport-security implementation lands under issue #398"

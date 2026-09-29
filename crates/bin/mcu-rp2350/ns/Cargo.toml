@@ -1,0 +1,261 @@
+# `ns` — the RP2350 NS-world (non-secure) shipping binary skeleton (EPIC #350, story S1 #352). The
+# S/NS split (TrustZone-M secure/non-secure worlds) arrives with story S4 #355; until then this is
+# the whole application. Runs the shared Seplos -> TMS -> MQTT-unit poll loop (`impl_app::run`) over
+# `bin_mcu_platform::McuPlatform`, on embassy-executor's thread executor.
+[package]
+name = "ns"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+description = "RP2350 (Cortex-M33) MCU shipping binary — NS-world skeleton. Seplos -> TMS -> MQTT-unit pipeline via impl-app::run over bin-mcu-platform::McuPlatform; the MQTT-unit -> net-stack wire hop is a Stage-1 honest stub (see the drain task in src/main.rs)."
+
+[dependencies]
+embassy-executor = { workspace = true }
+embassy-rp = { workspace = true }
+embassy-time = { workspace = true }
+embassy-sync = { workspace = true }
+# `udp` feature added here (additive over the rp2350-workspace embassy-net dep, which enables
+# tcp/dhcpv4/proto-ipv6/multicast/slaac but not udp) so the DDS/SPDP discovery leg (src/spdp/) can
+# open an `embassy_net::udp::UdpSocket`. Kept bin-local — no shared crate is touched.
+embassy-net = { workspace = true, features = ["udp"] }
+embassy-net-wiznet = { workspace = true }
+embassy-futures = { workspace = true }
+# Named directly (not just transitively via embedded-hal-bus/embedded-hal-async) so
+# `boot_w5500.rs` can name `embedded_hal::spi::ErrorType` — the trait that actually DECLARES the
+# `Error` associated type `embedded_hal_async::spi::SpiDevice` inherits (Rust's associated-type
+# path syntax `<T as Trait>::Assoc` requires naming the trait that declares `Assoc`, not a subtrait
+# that merely inherits it), needed to spell `build_w5500`'s concrete `Result<_, _>` error type.
+embedded-hal = { workspace = true }
+embedded-hal-async = { workspace = true }
+embedded-hal-bus = { workspace = true }
+# The 0.6 `embedded-io-async` (main-workspace pin) — the version `lib_io::EmbassyUart` bounds its
+# UART generic on, and the version `BufferedUartAdapter` re-implements Read/Write for.
+embedded-io-async = { workspace = true }
+# The 0.7 `embedded-io-async`, renamed — embassy-rp 0.10's `BufferedUart` implements THESE Read/Write
+# traits (semver-incompatible with 0.6), and `BufferedUartAdapter` delegates to them to bridge the
+# two versions (see ns/src/types/buffered_uart_adapter.rs). Already in the graph via embassy-rp; this
+# just names it so the adapter can call its trait methods.
+embedded-io-async-07 = { package = "embedded-io-async", version = "0.7" }
+cortex-m = { workspace = true }
+cortex-m-rt = { workspace = true }
+heapless = { workspace = true }
+panic-halt = { workspace = true }
+panic-probe = { workspace = true, optional = true }
+static_cell = { workspace = true }
+defmt = { workspace = true, optional = true }
+defmt-rtt = { workspace = true, optional = true }
+# `log` -> defmt bridge (see src/impl_defmt_log_bridge.rs) — optional, pulled in ONLY by the
+# `defmt` feature below, so the default (shipping) build's dep graph is unchanged.
+log = { workspace = true, optional = true }
+
+# The MCU platform factory (McuClock/McuPlatform/ChannelPublisher — Agent A, EPIC #350 story S1).
+bin-mcu-platform = { workspace = true }
+# The app contract (Platform/RunConfig/Health) + the shared policy loop (`run`).
+spec-app = { workspace = true }
+impl-app = { workspace = true }
+# The chip-agnostic embassy UART transport seam (`EmbassyUart<U, D, T>`) — feature "embassy" only.
+# lib-io's "embassy" feature is deliberately EMBASSY-VERSION-FREE (see crates/lib-io/src/
+# embassy_uart.rs's module doc): it names no `embassy-*` crate at all (`dep:embedded-io-async`,
+# `dep:embedded-hal`, `dep:embedded-hal-async` only) — the concrete embassy-rp 0.10 UART/GPIO types
+# and the `T: embedded_hal_async::delay::DelayNs` delay (this crate's own `embassy_time::Delay`) are
+# supplied entirely at this crate's call site (`src/main.rs`), so there is no links-key conflict
+# with this workspace's own embassy-time 0.5.1 pin.
+lib-io = { workspace = true, features = ["embassy"] }
+# Bumped from `["channel-embassy", "link"]` to include embassy + embassy-wiznet (EPIC #350,
+# story S8 #359). lib-net 0.9.1 uses embassy-time 0.5.1 (matches this workspace's own pin), so
+# no links-key conflict with embassy-time-driver — the whole embassy-net/sync/executor trio
+# resolves to the 0.10 generation now shared by this bin.
+lib-net = { workspace = true, features = ["channel-embassy", "link", "embassy", "embassy-wiznet"] }
+lib-parse = { workspace = true, features = ["seplos"] }
+lib-mapping = { workspace = true }
+# Lightweight on-target profiler: measure_block! macro + per-span aggregation. Optional feature.
+lib-profile = { workspace = true }
+
+# --- OLED FeatherWing UI, pure-render layer (WP5 part 1, feature "ui" below): `Screen` /
+# `ScreenView` / `UiSnapshot` / `ButtonEvent` + the four `#[inline(never)]` screen renderers behind
+# the `DrawTarget<Color = BinaryColor>` seam, host-golden-tested against
+# `embedded_graphics::mock_display::MockDisplay`. `no_std`, no allocator, no widget toolkit — see
+# `src/ui/mod.rs`'s module doc.
+embedded-graphics = { workspace = true, optional = true }
+# The hardware driver (WP5 part 2, hardware-wiring wave): `Ssd1306Async` + `BufferedGraphicsModeAsync`
+# + `DisplaySize128x32`, `async` feature required (see this crate's own Cargo.toml comment history /
+# the WP5 task note's "ssd1306 issue #215" trap) so `I2CDisplayInterface`/`Ssd1306Async` bind to the
+# ASYNC `embedded_hal_async::i2c::I2c`, matching the async `I2cDevice` `boot_i2c.rs` hands it.
+ssd1306 = { workspace = true, optional = true }
+# HIL debugging aid, feature "neopixel" below: `smart_leds::RGB8` — the plain color type
+# `embassy_rp::pio_programs::ws2812::PioWs2812::write` takes (that driver ships IN embassy-rp
+# itself, so no separate driver dep is needed, only this small color-type crate). Optional so the
+# default build's dep graph is unchanged.
+smart-leds = { workspace = true, optional = true }
+# The zero-dependency leaf canonical-model crate (WP4, feature "power" below): `DeviceRailReading`
+# / `DeviceRail` directly, to type the INA3221 driver's `rails` array in `boot_i2c.rs`.
+lib-canonical = { workspace = true, optional = true }
+
+# --- Stage 4 (EPIC #350, story #355) deps — all optional, gated behind their own feature below ---
+# The frozen S/NS veneer ABI's error/custody-code constants + `sv_err_to_security_error` mapping fn
+# (Agent A's crate, `bin/mcu-rp2350/abi`). Sibling path (inside THIS excluded workspace's tree), so it
+# must be a workspace member for Cargo to resolve it — Agent A adds it to `../Cargo.toml`'s
+# `members` (out of this crate's territory). Harmless as a plain-constants dep even with feature
+# "veneers" off, EXCEPT that its manifest must exist on disk for `cargo build` to resolve at all
+# (a path dependency's Cargo.toml is read regardless of whether the enabling feature is active) —
+# see this crate's README risk note.
+rp2350-abi = { workspace = true, optional = true }
+# `lib_security::SessionCipher`/`SecurityError`/`KeyCustody`/`KeyHandle` — the seam
+# `VeneerSessionCipher` implements. Plain path dep (NOT `workspace = true`: this crate lives at
+# `../../../crates/lib-security` (three levels up from `ns/`: `ns/` -> `rp2350/` -> `bin/` ->
+# repo root), OUTSIDE this excluded workspace's own directory tree, so it is not a
+# sibling-workspace-membership concern the way `rp2350-abi` is — same path shape `rp2350-abi`'s own
+# Cargo.toml uses for this same dependency). `default-features = false` matches the ROOT
+# sentient-rs workspace's own pin (`Cargo.toml`'s `[workspace.dependencies]`) — this crate needs
+# only the always-compiled traits/error/profile modules, not either concrete backend
+# (`software`/`wolfcrypt`); `lib-net`'s own `crypto` feature (enabled transitively by ours below)
+# separately requests `features = ["software"]` on the SAME resolved package, which Cargo unifies
+# with this declaration (no conflict — both agree `default-features = false`).
+lib-security = { workspace = true, optional = true }
+
+[features]
+default = []
+# RTT-only logging, opt-in for a debug/bench build. UART0 carries the Seplos wire, not a console.
+# `dep:log` bridges `impl_app::run`'s `log::info!`/`log::warn!` poll-loop diagnostics to defmt/RTT
+# (see src/impl_defmt_log_bridge.rs) — without this feature, `log` is never pulled into the graph
+# and those calls stay the silent no-ops they always were (no sink wired at all).
+# `embassy-net-wiznet/defmt` turns on the VENDORED driver's own defmt sink so its RX
+# header-corruption guard (`vendor/embassy-net-wiznet/src/device.rs`, upstream PR #5706 — see
+# `vendor/embassy-net-wiznet/PATCHES.md`) actually REPORTS the frames it discards. Without it that
+# guard's `defmt::warn!` compiles out and a corrupting SPI link degrades SILENTLY: the panic-reboot
+# is gone, but so is any evidence the wiring is still marginal. Discarded frames are exactly the
+# datum the bench needs to tell "fixed" from "still corrupting, now quietly dropping packets".
+defmt = [
+    "dep:defmt",
+    "dep:defmt-rtt",
+    "dep:panic-probe",
+    "dep:log",
+    "embassy-net-wiznet/defmt",
+]
+# Enable on-target profiling (story #365): measure_block! macro + per-span aggregation via lib-profile.
+# When off, all profiler code compiles to zero cost. Requires defmt feature for RTT output.
+profile = ["lib-profile/profile", "defmt"]
+
+# OLED FeatherWing UI (WP5 — render layer + hardware wiring): `ns::ui` (the lib target's render
+# module, see `src/lib.rs`) + `boot_ui.rs`'s SSD1306 bring-up (over its OWN directly-owned I2C1 bus,
+# GP2/GP3 — no shared-bus dependency), render-on-change display task, and the three debounced
+# button tasks. Off by default — the shipping image is unchanged unless explicitly opted in.
+# Independent of `power` now: the INA3221 (feature `power`, below) is wired to a DIFFERENT
+# peripheral (I2C0, GP4/GP5), so the two features share no bus and no dependency (the earlier
+# `embassy-embedded-hal` shared-bus dep both features pulled in is gone — see `boot_i2c.rs`'s
+# module doc for why).
+# Mutually exclusive with `mesh`: `button_task` claims GP24/GP25 for buttons A/B, the SAME pins
+# `mesh` wires to Heltec UART1 TX/RX — enabling both is a `compile_error!` in `src/main.rs`, not a
+# reassignable pin conflict (see that error's message for the rationale).
+ui = ["dep:embedded-graphics", "dep:ssd1306"]
+
+# INA3221 multi-rail rail-draw telemetry (WP4): the adapter board's OWN W5500/Heltec rail draw —
+# diagnostics/UI only, NOT the project's power source (the Seplos BMS, unconditional). Enables
+# `boot_i2c.rs`'s rail-monitor leg — the async INA3221 driver (`lib-io`'s own `ina3221` feature) —
+# over its OWN directly-owned I2C0 bus (GP4/GP5, the bench's actual INA3221 wiring), and
+# `McuPlatform::emit_rail_draw`'s override (`bin-mcu-platform`'s own `power` feature, which also
+# implements `spec_app::RailMonitor` for the driver). Independent of `ui` now: a DIFFERENT
+# peripheral than the OLED's I2C1 (GP2/GP3), so the two features share no bus — enabling either
+# alone, or both together, both work with no shared state between them. Off by default.
+power = [
+    "dep:lib-canonical",
+    "lib-io/ina3221",
+    "bin-mcu-platform/power",
+]
+
+# Onboard NeoPixel status LED (HIL debugging aid, `boot_neopixel.rs`): dim-color link/DHCP/telemetry
+# status over PIO0/DMA_CH2/GPIO21 — see that module's doc comment for the exact semantics. Off by
+# default; no interaction with `power`/`ui` (separate PIO/DMA peripherals, separate GPIO, no shared
+# bus).
+neopixel = ["dep:smart-leds"]
+
+# --- Stage 4 (EPIC #350, story #355) — see `src/main.rs`'s crate doc for what each does ---
+# `VeneerSessionCipher` (an NS-side `lib_security::SessionCipher` riding the frozen sv_* veneer
+# ABI) wired as an optional Seal `CryptoStage` between the publisher's channel output and
+# `drain_task`. Requires Agent A's veneer-implib artifact at link time (`build.rs`,
+# `SENTIENT_VENEER_IMPLIB`) — without it the binary compiles but fails to LINK (undefined `sv_*`
+# symbols), which is the expected state until that artifact exists.
+veneers = ["dep:rp2350-abi", "dep:lib-security", "lib-net/crypto"]
+
+# --- ADR 0013 (transport security: one Secure-world trust store behind a seam) ---
+# The TLS interposition point for the device-hosted MQTT broker: `src/boot_tls.rs` +
+# `src/types/tls_refusal.rs` + `src/impl_tls_refusal.rs`, called from `broker_task`'s
+# `accept_source` closure in `src/main.rs` between `TcpSocket::accept(1883)` and the `PooledSocket`
+# handed to `lib_net::embassy::async_broker_pump`. Default OFF.
+#
+# **This gates a STUB, and the stub FAILS CLOSED.** With `tls` on, every accepted connection is
+# aborted (RST) and refused; the broker serves nobody. It does NOT fall back to plaintext — a
+# broker that looks TLS-protected and silently is not would be strictly worse than the honestly
+# documented plaintext listener the default build ships (`crates/bin/mcu-rp2350/README.md`). The
+# refusal is enforced by the type system, not by discipline: `boot_tls::interpose_tls` returns
+# `Result<core::convert::Infallible, TlsRefusal>`, so no success value exists to return.
+#
+# **No dependencies, deliberately — and this is the honest boundary of the wiring.** `crates/lib-tls`
+# (the rustls glue, ADR 0013 §1 crate-placement table) is registered in the ROOT workspace and in
+# this workspace's `[workspace.dependencies]`, but is NOT consumed here yet, because there is
+# nothing here that could call it. Every constructor it exposes — `TlsServerStage::new`,
+# `SeamCryptoProvider::new`, `PinnedSpkiClientVerifier::new` — takes a `lib_tls::SecureProvider`
+# (the ADR 0013 §1 aggregation: `TrustStore + KeyStore + KeyAgreement + KeyDerivation +
+# RecordCipher + Verifier + Hasher + Rng`), and NO type in this crate satisfies that bound: the
+# four new `lib-security` traits have no Secure-world backend on this chip, no `sv_*` veneer entry
+# points exist for them, and the S-world RNG is still `InsecureTestRng` with no provisioned
+# identity key (ADR 0013 §7 WP-4/WP-5 — *"no honest security claim is possible before this
+# lands"*). Adding the dependency edge with no reachable call would be decoration. It lands in
+# WP-6, together with the `Veneer*` provider, after WP-3's `thumbv8m` measurement gate.
+#
+# (Measured, not assumed: `lib-tls` DOES compile and link into this `thumbv8m` image today with the
+# dependency added — its `extern crate alloc` needs no `#[global_allocator]` while nothing in it
+# actually allocates. That changes the moment rustls lands, which is when WP-6's bounded
+# `embedded-alloc` arena over a dedicated static region becomes a hard prerequisite, per ADR 0013
+# §3. Recorded so the constraint is not mis-attributed to today's state.)
+#
+# Pair with `defmt` on the bench: the refusal is logged over RTT via `TlsRefusal::reason()`, and
+# without `defmt` this crate has no logging sink at all, so a `tls`-only build refuses SILENTLY.
+# Interacts with nothing else — no pin, bus, peripheral or task is claimed, so it composes freely
+# with `mesh`/`ui`/`power`/`neopixel`/`veneers` (and does not disturb the `mesh` + `ui`
+# mutual exclusion in `src/main.rs`).
+tls = []
+
+# Moves the Seplos parser/poll leg (`run_task`) onto embassy-rp `CORE1` via a second executor,
+# keeping the publish drain leg on core 0. See `src/core1.rs`'s module doc. No new deps — the
+# `embassy_rp::multicore`/`embassy_executor::Executor` types used are already in this crate's
+# always-compiled dependency graph.
+core1-parser = []
+
+# WP3 (delight-features): Meshtastic mesh-radio leg over UART1 -> Heltec V4 (`src/boot_mesh.rs`).
+# Enables `lib-net`'s own `mesh` feature (the no_std/no-alloc codec: condense + on-air framing —
+# NOT `mesh-tokio`, which is std/tokio/alloc-only and pulls in `locate` too; the MCU has no location
+# service) and `bin-mcu-platform`'s `mesh` feature (`MeshPlatform`/`MeshUnit`). Default OFF so the
+# shipping image is unchanged unless explicitly opted in.
+# Mutually exclusive with `ui`: `build_mesh_transport` claims GP24/GP25 for Heltec UART1 TX/RX, the
+# SAME pins `ui`'s `button_task` wires to buttons A/B — enabling both is a `compile_error!` in
+# `src/main.rs` (a genuine pin-budget collision on this board, not worked around by reassignment).
+mesh = ["bin-mcu-platform/mesh", "lib-net/mesh"]
+
+# The host-testable lib target (hardware-wiring wave): exposes `pub mod ui;` (feature-gated, same
+# `ui` feature as below) SOLELY so the 17 `MockDisplay` golden tests written against `ns::ui` can
+# actually run — before this, the crate was bin-only (`[[bin]] test = false` below), so those tests
+# existed on disk but `cargo test -p ns` never compiled or ran them. `src/lib.rs` deliberately has NO
+# `#![no_std]` unconditionally (see that file's own doc comment): it uses
+# `#![cfg_attr(not(test), no_std)]` so `cargo test -p ns --lib --features ui` gets the std test
+# harness on the host, while a real target build (`--target thumbv8m.main-none-eabihf`, `test` cfg
+# unset) still compiles it `no_std` — `ns::ui`'s own code is already no_std-clean either way. Cargo
+# auto-discovers `src/lib.rs` as the lib target with no `[lib]` section needed at all; this section
+# exists purely for documentation/explicitness.
+[lib]
+name = "ns"
+test = true
+
+# Mutes rust-analyzer's "can't find crate for `test`" on this no_std bin (matches hil/pico-seplos-emu
+# and the embassy-rp2040-template convention) — no unit tests live directly in the BIN target; logic
+# lives in the host-testable `lib-*`/`impl-app`/`bin-mcu-platform` crates (and, as of this wave, this
+# crate's own `[lib]` target above) per the repo's embedded-engineering rule ("test on the host before
+# the target"). `main.rs` stays no_std/no_main — it consumes `ns::ui` via `use`, never `mod ui;`
+# itself (a `mod` in both the lib and the bin would compile the module twice as two distinct types).
+[[bin]]
+name = "ns"
+test = false
+bench = false

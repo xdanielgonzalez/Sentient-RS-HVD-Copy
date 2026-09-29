@@ -1,0 +1,40 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "lib-tls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "The rustls glue for the device's MQTT TLS server leg (ADR 0013 §1/§3, WP-3): the SecureProvider aggregation over the lib-security seam, a pinned-SPKI client-certificate verifier, a TrustedTime-backed time provider, and TlsServerStage. no_std + alloc. SKELETON ONLY — rustls is deliberately NOT a dependency yet and every security operation fails closed with TlsError::Unimplemented."
+
+[dependencies]
+# The ONLY dependency, and deliberately so (ADR 0013 §1, crate-placement table: "depends on
+# `lib-security` traits only"). This crate names no chip, no HAL and no runtime: it is generic over
+# one `SecureProvider` bound, so an RP2350 CMSE-veneer backend and an STM32H5 PKA/AES/RNG backend
+# are the same code here. `default-features = false` comes from the workspace pin, which keeps
+# lib-security's `std` and `software` features OFF — this crate needs the trait seam, never a
+# concrete backend, and must stay `no_std` for the Non-Secure MCU image.
+lib-security = { workspace = true }
+
+# NOT YET A DEPENDENCY — recorded here so the omission reads as a decision, not an oversight:
+#
+#   rustls = { version = "0.23", default-features = false }   # ADR 0013 WP-3
+#   embedded-alloc = { version = "0.6" }                      # ADR 0013 §3, the bounded heap
+#
+# ADR 0013 §3 and open questions 1-4 make rustls's fitness on `thumbv8m` *unestablished*: there is
+# no published flash/RAM figure for rustls + a RustCrypto provider on Cortex-M, and no public
+# example of `UnbufferedServerConnection` on Cortex-M or under embassy at all. WP-3 is a GATE — it
+# must produce a measured footprint and a host handshake against a real rustls client before the
+# target work (WP-4/5/6) starts, and if the measurement fails, §3's fallback (terminate TLS on the
+# Pi, run the MCU on a private link) applies and this crate is re-scoped rather than extended.
+# Adding the dependency now would bake in the gate's outcome before it is measured, and would drag
+# a heap into a build that has no use for one yet.
+
+[dev-dependencies]
+# The fail-closed test double (`tests/fail_closed.rs`) implements every trait in the `SecureProvider`
+# bound list by hand and returns `SecurityError::NotImplemented` from all of them — that is the
+# point of the test, so no concrete lib-security backend feature is enabled here either.
+
+[lints]
+workspace = true

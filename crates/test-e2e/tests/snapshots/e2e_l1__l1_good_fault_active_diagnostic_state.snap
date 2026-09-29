@@ -1,0 +1,26 @@
+---
+source: crates/test-e2e/tests/e2e_l1.rs
+expression: diag_json
+---
+{
+  "codes": [
+    {
+      "failure_mode": "FMI_CONDITION_EXISTS",
+      "hint": "cell overvoltage",
+      "occurrence_count": 1,
+      "severity": "SEV_7_MAJOR",
+      "suspect_parameter": 1,
+      "time_raised": "[time]"
+    },
+    {
+      "failure_mode": "FMI_CONDITION_EXISTS",
+      "hint": "short circuit",
+      "occurrence_count": 1,
+      "severity": "SEV_7_MAJOR",
+      "suspect_parameter": 7,
+      "time_raised": "[time]"
+    }
+  ],
+  "device_id": "METEOR-001",
+  "overflow": 0
+}

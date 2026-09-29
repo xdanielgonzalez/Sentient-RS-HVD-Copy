@@ -1,0 +1,142 @@
+name: Claude PR Review
+
+# BRIDGE + WAIT: this workflow does not run the review itself. It fires a Claude Code Routine
+# ("sentient-rs PR categorical review") over the Routines fire API, then WAITS — polling the PR's
+# comments until the Routine's summary comment for this exact head SHA appears — so this check's
+# outcome reflects the review actually landing, and it can be made a required status check. The
+# Routine's session reads .github/claude-review-rubric.md, applies the categories whose triggers
+# match the changed files, posts inline findings plus one summary comment with every category
+# marked ✅ Reviewed or ⏭️ Skipped (with the reason), ending in an invisible marker line
+# `<!-- claude-categorical-review: <head-sha> -->` that this job polls for. The review runs on the
+# Claude Code subscription; this job holds no model key.
+#
+# WHY POLL A COMMENT instead of a run-status API: the fire endpoint is async-only — it returns the
+# new session's id/URL immediately and the Routines API surface has no documented run/session
+# status endpoint to block on. The summary comment is the review's real artifact anyway, so its
+# marker is the wait condition.
+#
+# Security posture:
+#   - No checkout. GITHUB_TOKEN carries read-only issue/PR scope (comment polling only). The
+#     Routine credential is the per-Routine bearer token, which can do exactly one thing — fire
+#     that one Routine.
+#   - The fire payload carries ONLY github.repository, the PR number, the head SHA, and the event
+#     action — never PR titles/bodies/branch names. All ${{ }} expansion is confined to `env:`.
+#   - The Routine reads the rubric from the DEFAULT branch, so a PR cannot weaken its own review
+#     criteria.
+#   - A PR author could post the marker comment themselves to fake the check green — accepted: the
+#     marker gates review LATENCY, not review integrity, and a hand-posted marker is as visible in
+#     the thread as the review it fakes.
+#   - Superseded firings: the Routine compares the fired head SHA with the PR's current head and
+#     exits silently on mismatch; the superseded bridge job is cancelled by the concurrency group.
+#
+# Inert until both secrets exist (Settings → Secrets → Actions):
+#   CLAUDE_ROUTINE_ID     — the Routine's id (trig_...)
+#   CLAUDE_ROUTINE_TOKEN  — per-Routine API token (sk-ant-oat01-...), generated once at
+#                           https://claude.ai/code/routines → the Routine → "Add an API trigger"
+# The fire endpoint is experimental (dated anthropic-beta header below); if Anthropic revs it, the
+# header is the thing to bump.
+
+on:
+  pull_request:
+    # `synchronize` (a push to an open PR) stays on, as decided in #404: a review of the opening
+    # commit goes stale the moment the author pushes a fix. Per-push cost is one Routine run
+    # (subscription usage); dropping `synchronize` from this list is still the whole rollback.
+    types: [opened, reopened, ready_for_review, synchronize]
+
+# A newer event for the same PR cancels the older bridge job (which would otherwise wait on a
+# marker for a head SHA that no longer exists). The Routine side self-cancels via its own
+# head-SHA check.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+    actions: read
+    contents: read
+    issues: write
+
+jobs:
+  review:
+    name: categorical review
+    # drafts, dependabot, and fork PRs (no secrets) are skipped
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.fork == false
+    # arc-runner-set admits container jobs only ("Jobs without a job container are forbidden on
+    # this runner", run 30368129612). rust:1.91 through the Harbor Docker Hub mirror is already in
+    # the pull-through cache (same image as _quality.yml's MSRV lane) and ships the curl +
+    # ca-certificates this job needs.
+    runs-on: arc-runner-set
+    container: rust-mirror:443/docker-hub/library/rust:1.91
+    # Fire is seconds; the wait dominates. The poll loop gives up at POLL_DEADLINE_SECS (25 min)
+    # with a pointer to the session URL; this bounds the whole job.
+    timeout-minutes: 30
+    permissions:
+      issues: read           # poll the PR's issue comments for the review marker
+      pull-requests: read
+    steps:
+      # Explicit `shell: bash`: in ARC container mode a bare `run:` executes under dash
+      # (see _mcu-build.yml).
+      - name: Fire the review Routine and wait for the review
+        shell: bash
+        env:
+          ROUTINE_ID: ${{ secrets.CLAUDE_ROUTINE_ID }}
+          ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_ACTION: ${{ github.event.action }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ROUTINE_ID}" ] || [ -z "${ROUTINE_TOKEN}" ]; then
+            echo "::error::CLAUDE_ROUTINE_ID / CLAUDE_ROUTINE_TOKEN secrets are not set — review not fired"
+            exit 1
+          fi
+
+          marker="claude-categorical-review: ${HEAD_SHA}"
+          comments_url="https://api.github.com/repos/${PR_REPO}/issues/${PR_NUMBER}/comments?per_page=100&sort=created&direction=desc"
+          poll() {
+            curl -fsSL --retry 3 \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${comments_url}" | grep -qF "${marker}"
+          }
+
+          # A marker for this exact SHA may already exist (reopen / re-run of this job after the
+          # review landed): then there is nothing to fire — succeed immediately.
+          if poll; then
+            echo "Review for ${HEAD_SHA} already present — nothing to fire."
+            exit 0
+          fi
+
+          body=$(printf '{"text":"repo=%s pr=%s head_sha=%s event=%s"}' \
+            "${PR_REPO}" "${PR_NUMBER}" "${HEAD_SHA}" "${EVENT_ACTION}")
+          resp=$(curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 \
+            -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
+            -H "Authorization: Bearer ${ROUTINE_TOKEN}" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "Content-Type: application/json" \
+            --data "${body}")
+          session_url=$(printf '%s' "${resp}" | sed -n 's/.*"claude_code_session_url":"\([^"]*\)".*/\1/p')
+          echo "Fired review Routine for ${PR_REPO}#${PR_NUMBER} @ ${HEAD_SHA} — session: ${session_url:-not returned}"
+          {
+            echo "### Claude PR review"
+            echo
+            echo "- PR: ${PR_REPO}#${PR_NUMBER} @ \`${HEAD_SHA}\` (${EVENT_ACTION})"
+            echo "- Review session: ${session_url:-not returned}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          POLL_DEADLINE_SECS=1500   # 25 min of waiting for the review to land
+          POLL_INTERVAL_SECS=20
+          deadline=$(( SECONDS + POLL_DEADLINE_SECS ))
+          until poll; do
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "::error::Review did not land within $((POLL_DEADLINE_SECS / 60)) min — check the session: ${session_url:-unknown}"
+              exit 1
+            fi
+            sleep "${POLL_INTERVAL_SECS}"
+          done
+          echo "Review landed for ${HEAD_SHA}."

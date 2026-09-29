@@ -1,0 +1,92 @@
+name: Setup
+description: >-
+  Shared CI scaffolding: wires the sccache compiler cache onto the shared NFS mount (/ci-cache)
+  for every compiling lane. In the pre-tooled sentient-builder container every tool (just,
+  cargo-audit/deny/vet/nextest/tarpaulin/semver-checks/auditable/cyclonedx, sccache, rustup
+  targets + rustfmt/clippy) is baked into the image; in minimal containers (e.g. the MSRV lane's
+  plain rust:1.91) only sccache is fetched here — pinned + sha256-verified — so those lanes share
+  the same compiler cache instead of cold-compiling the workspace every run.
+
+runs:
+  using: "composite"
+  steps:
+
+    # No MinIO/S3 CI cache. The ONLY CI cache is sccache on the shared NFS mount (/ci-cache, wired
+    # below); crate sources come from the kellnr mirror (baked into sentient-builder). With a working
+    # sccache a separate target/ blob cache is redundant — it repopulates target/ from cache hits — so
+    # it was dropped. MinIO is now purely the Yocto sstate/downloads mirror + golden-image store;
+    # nothing in CI writes cache to it. (This action therefore takes NO inputs — the old
+    # minio-access-key/minio-secret-key/cache-key inputs were dead weight from the dropped S3 cache:
+    # never read, and `cache-key` wrongly suggested per-lane caches when all lanes share ONE sccache.)
+
+    # Minimal containers (plain rust:1.91 in the MSRV lane) ship no sccache, which used to mean the
+    # whole workspace cold-compiled there on every PR run. Install the pinned release binary instead
+    # (same version as sentient-builder bakes, so both interoperate on the shared cache dir).
+    # sha256-pinned like setup-k8s-tools' helm/kubectl installs; into RUNNER_TEMP (non-root safe),
+    # prepended to PATH for the later steps of this job. A download failure only warns — sccache is
+    # an optimization, and the config step below already degrades to building without it — but a
+    # checksum MISMATCH hard-fails: never run a binary that isn't the pinned one.
+    - name: Install pinned sccache (containers without one baked in)
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v sccache >/dev/null 2>&1; then
+          exit 0  # sentient-builder path: already baked in
+        fi
+        if [ "$(uname -m)" != "x86_64" ]; then
+          echo "::warning::no sccache baked in and no pinned binary for $(uname -m) — building without the compiler cache"
+          exit 0
+        fi
+        SCCACHE_VERSION="v0.16.0"
+        SCCACHE_SHA256="aec995a83ad3dff3d14b6314e08858b7b73d35ca85a5bcf3d3a9ec07dee35588"
+        URL="https://github.com/mozilla/sccache/releases/download/${SCCACHE_VERSION}/sccache-${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+        if ! curl -fsSL --retry 3 -o "$RUNNER_TEMP/sccache.tgz" "$URL"; then
+          echo "::warning::sccache download failed (${URL}) — building without the compiler cache"
+          exit 0
+        fi
+        echo "${SCCACHE_SHA256}  $RUNNER_TEMP/sccache.tgz" | sha256sum --check --quiet
+        tar -xzf "$RUNNER_TEMP/sccache.tgz" -C "$RUNNER_TEMP" --strip-components=1 \
+          "sccache-${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache"
+        chmod +x "$RUNNER_TEMP/sccache"
+        echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+    # sccache: shared *compiler* cache on the NFS mount — rustc units (serde/tokio/smoltcp/rumqttd/
+    # rustls/…) cached once and reused across every lane/run/node. The binary is baked into
+    # sentient-builder (or pin-installed above); this only wires the env. CARGO_INCREMENTAL=0
+    # (incremental is useless in CI and sccache can't cache it).
+    - name: Configure sccache (shared compiler cache)
+      shell: bash
+      run: |
+        # The guard stays even with the install step above (non-x86_64 or a failed download leave
+        # no binary) — otherwise cargo fails with "could not execute process `sccache … rustc`".
+        if command -v sccache >/dev/null 2>&1; then
+          {
+            echo "RUSTC_WRAPPER=sccache"
+            echo "CARGO_INCREMENTAL=0"
+            if [ -d /ci-cache ]; then
+              # Shared NFS-backed sccache dir: the ci-cache RWX PVC bind-mounted at /ci-cache into
+              # every compiling lane's container. sccache reads/writes objects straight to the mount
+              # (backed by rust-mirror:/srv/build-cache) — no S3, shared across both nodes.
+              echo "SCCACHE_DIR=/ci-cache/sccache"
+              echo "SCCACHE_CACHE_SIZE=20G"
+            fi
+            # No /ci-cache mount (a lane not wired for the shared cache): leave sccache on its
+            # ephemeral local default — builds still work, just no cross-run reuse, and still no MinIO.
+          } >> "$GITHUB_ENV"
+          # ...but SAY SO. This fallback is silent by construction: the lane still compiles, still
+          # passes, and merely gets slower, so a lane that loses the shared cache looks identical to
+          # one that has it. The trap is real and one `kubectl` away: the ARC **runner** container
+          # does NOT mount /ci-cache (only the `-workflow` pod's `job` container does), so ANY job
+          # that drops its `container:` silently falls off the shared cache. Warn loudly rather than
+          # let a 98%-hit-rate lane quietly become a cold one.
+          if [ ! -d /ci-cache ]; then
+            echo "::warning::/ci-cache is not mounted — sccache is using its EPHEMERAL local dir, so this lane gets no cross-job or cross-run reuse (expect a much slower build). Every compiling lane must declare a \`container:\`; the bare ARC runner container has no /ci-cache mount."
+          fi
+          # Do NOT start the server here: the SCCACHE_* vars above only reach LATER steps via
+          # $GITHUB_ENV, so a server started in THIS step would bind the DEFAULT ~/.cache/sccache and
+          # ignore SCCACHE_DIR/SCCACHE_BUCKET (that's exactly why the cache silently wrote to ephemeral
+          # container disk before). Let sccache lazy-start on the first cargo call in the build step,
+          # where the env IS set, so it binds the intended backend.
+        else
+          echo "sccache unavailable (no baked binary, install skipped) — building without the shared compiler cache."
+        fi

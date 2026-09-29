@@ -1,0 +1,19 @@
+# Verified against /mnt/d/hvd/embassy-rp2040-template/.cargo/config.toml (a working embassy-rp
+# project on this machine) and mirrored from hil/pico-seplos-emu/.cargo/config.toml (the proven
+# RP2350 template) — same target, same runner. probe-rs is commented out there too, and here: this
+# Stage-1 skeleton has no debug-probe/JTAG bring-up story yet — elf2uf2-rs's BOOTSEL-drive UF2 flash
+# is the simplest dev-loop path. Install with `cargo install elf2uf2-rs`.
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "elf2uf2-rs --deploy --serial --verbose"
+
+[build]
+target = "thumbv8m.main-none-eabihf" # RP2350A = Cortex-M33
+
+# defmt's log level is a COMPILE-TIME filter read from the `DEFMT_LOG` env var by `defmt-macros` at
+# macro-expansion. With it unset, defmt defaults to error-only, so every `defmt::info!` in this
+# crate expands to a NO-OP that never reaches the global logger — the RTT up-buffer never advances,
+# `_defmt_acquire` is never called, and the board emits nothing (verified on hardware: WrOff stayed
+# 0, no fault). Set it here so the whole excluded workspace's bench/debug builds actually log info+.
+# (Ship builds don't enable the `defmt` feature at all, so this env var is inert for them.)
+[env]
+DEFMT_LOG = "info"

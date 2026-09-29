@@ -1,0 +1,52 @@
+# bin-rpi config for the DDS conformance harness (WP7a, story #321/#324).
+#
+# Same Seplos->TMS->MQTT adapter as the viz stack (deploy/compose/configs/sentient.toml), but with
+# the `[dds]` section present so the MIL-STD-3071 DDS/RTPS transport comes up ALONGSIDE MQTT (MQTT
+# stays always-on regardless — see crates/bin/rpi/src/runtime.rs "DDS/RTPS transport" block).
+#
+# The stock CycloneDDS CLI in the `conformance` service (compose.yaml) is the interop authority.
+[device]
+id = "METEOR-001"
+
+[serial]
+kind = "rs232"        # pty has no RTS line for rs485 direction control
+port = "/tmp/ttySIM"  # socat pty<->tcp bridge to the `sim` service (app-entrypoint.sh)
+baud = 19200
+parity = "none"
+stop_bits = 1
+read_timeout_ms = 1000
+
+[poll]
+dip_addresses = [0]
+# MIL-STD-3071 mandates DcMeasurementUpdate at 1 Hz nominal (see PollConfig::validate);
+# this must stay <= 1000.
+interval_ms = 1000
+fault_every = 10
+
+[broker]
+# 127.0.0.1:11883, NOT the default 1883 — with `network_mode: host` (compose.yaml) the embedded
+# rumqttd broker binds a HOST port, and 1883 is commonly already taken (e.g. a viz-stack container's
+# rootlessport forwarder). 11883 keeps this harness from colliding. MQTT is not exercised by the DDS
+# checks; it only has to come up so bin-rpi's runtime is the real, full composition.
+host = "127.0.0.1"
+port = 11883
+
+[publish]
+prefix = "tms"
+
+# --- The DDS/RTPS (MIL-STD-3071) transport under test -----------------------------------------
+# Presence of this section enables the DDS stack (#324). domain_id=0 is mandated by MIL-STD-3071
+# (D.2). `iface`/`unicast_addr` are tuned for the shared host network namespace this harness runs in
+# (see compose.yaml's `network_mode: host` note and deploy/dds-conformance/README.md):
+#   - iface eth0        : the only MULTICAST-capable interface in the WSL/host netns (lo has no
+#                         MULTICAST flag, so the SPDP ff02::1234 multicast join would fail there).
+#   - unicast_addr      : eth0's own link-local IPv6, advertised in this writer's DDS unicast
+#                         locators so the CycloneDDS peer (same netns, also on eth0) can route DATA
+#                         back. Advertising the default `::1` while binding sockets scoped to eth0
+#                         yields ENETUNREACH (the WP6 finding). Override per-host via the
+#                         SENTIENT_DDS__UNICAST_ADDR / SENTIENT_DDS__IFACE env vars set in
+#                         compose.yaml.
+[dds]
+domain_id = 0
+iface = "eth0"
+unicast_addr = "fe80::215:5dff:fee2:3c1d"

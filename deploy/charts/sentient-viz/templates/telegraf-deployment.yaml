@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-telegraf
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: telegraf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "telegraf") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "telegraf") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/telegraf-configmap.yaml") . | sha256sum }}
+        # INFLUX_TOKEN comes from the influxdb Secret — roll on token change too.
+        checksum/influxdb-secret: {{ include (print $.Template.BasePath "/influxdb-secret.yaml") . | sha256sum }}
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: telegraf
+          image: "{{ .Values.images.telegraf.repository }}:{{ .Values.images.telegraf.tag }}"
+          imagePullPolicy: {{ .Values.images.telegraf.pullPolicy }}
+          # No probes: mqtt_consumer and influxdb_v2 both retry with backoff
+          # internally — broker-unavailable at start is a logged retry, not a crash.
+          env:
+            # The in-cluster app+sim broker for the tms/# consumer (rendered only when
+            # telegraf.inClusterBroker). External real-hardware brokers are added separately via
+            # telegraf.extraDeviceBrokers (see the telegraf configmap).
+            - name: MQTT_URL
+              value: tcp://{{ include "sentient-viz.fullname" . }}-app:{{ .Values.app.brokerPort }}
+            - name: GREENGRASS_MQTT_URL
+              value: tcp://{{ include "sentient-viz.fullname" . }}-greengrass-bridge:1883
+            - name: INFLUX_URL
+              value: http://{{ include "sentient-viz.fullname" . }}-influxdb:8086
+            - name: INFLUX_ORG
+              value: {{ .Values.influxdb.org | quote }}
+            - name: INFLUX_BUCKET
+              value: {{ .Values.influxdb.bucket | quote }}
+            - name: INFLUX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sentient-viz.fullname" . }}-influxdb
+                  key: admin-token
+          volumeMounts:
+            - name: config
+              mountPath: /etc/telegraf/telegraf.conf
+              subPath: telegraf.conf
+              readOnly: true
+          resources:
+            {{- toYaml .Values.telegraf.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "sentient-viz.fullname" . }}-telegraf

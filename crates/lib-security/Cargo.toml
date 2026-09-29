@@ -1,0 +1,117 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "lib-security"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Auth tokens, certificates, and cryptography behind a provider seam with compile-time FIPS and TrustZone/secure-element toggles. Fail-closed; private key material never crosses the KeyStore boundary."
+
+[dependencies]
+heapless = { workspace = true }
+# Zeroize secret material on drop (no_std, no alloc). Real backends are wired per the
+# security-integration-map via the enforced pipeline; this crate defines the seam.
+zeroize = { workspace = true, default-features = false }
+
+# --- wolfCrypt backend (feature `wolfcrypt`) ---
+# The concrete crypto backend behind the seam. Exposes RustCrypto traits, so we bind against those
+# rather than wolfCrypt-internal types. REQUIRES a system wolfSSL 5.9.1+ (NOT vendored, built from
+# the `High-Velocity-Decisions/wolfssl-fork`) — and, for the `fips` tier, the wolfCrypt FIPS 140-3
+# validated module. It therefore links only on a build host with wolfSSL present (a separate build
+# ledger, like the Zephyr `west` target, exercised by `.github/workflows/wolfcrypt.yml`); the default
+# workspace build leaves this feature off.
+#
+# TRAIT-VERSION PINS: these MUST match the RustCrypto trait crate versions wolfssl-wolfcrypt 2.0.0
+# actually depends on, confirmed by reading its Cargo.toml directly: digest 0.11 (features =
+# ["block-api"]), signature 2.2, rand_core 0.10.
+#
+# NOTE on `rand_core`: `WolfRng` does NOT use wolfCrypt's `rand_core::TryRng` adapter — that adapter's
+# `Error = Infallible` and its `try_fill_bytes` panics on a real DRBG failure instead of returning
+# `Err`, which would violate this crate's fail-closed contract (see `backends::wolfcrypt`'s module
+# doc). `WolfRng` binds to wolfCrypt's native, fallible `RNG::generate_block` (`Result<(), i32>`)
+# instead. `rand_core` is nonetheless kept as a dep (and the wolfssl-wolfcrypt `rand_core` feature
+# requested) so the committed Cargo.lock dependency graph is UNCHANGED from `main` — the wolfcrypt
+# bring-up is a separate, non-gating ledger and must not perturb the shared lock (which the main
+# gate's cargo-audit / cargo-deny evaluate). The crate simply does not `use` the rand_core adapter.
+wolfssl-wolfcrypt = { workspace = true, optional = true, default-features = false, features = ["digest", "signature", "rand_core"] }
+digest = { workspace = true, optional = true, default-features = false }
+signature = { workspace = true, optional = true, default-features = false }
+rand_core = { workspace = true, optional = true, default-features = false }
+
+# --- software backend (feature `software`, default ON) ---
+# The concrete SOFTWARE-tier crypto backend: pure-Rust ECDSA P-256 (`p256`/`ecdsa`, RustCrypto),
+# no_std/no_alloc (default-features off — no "std"/"alloc"/"getrandom"; see `backends::software`'s
+# module doc). Unlike `wolfcrypt`, this needs no system library and no separate build ledger, so it
+# is ON by default — it is what makes the seam's fail-closed stubs into a real KeyStore/TokenVerifier
+# for the tier every build already reports when `trustzone`/`fips` are off (see `SecurityProfile`).
+p256 = { workspace = true, optional = true, default-features = false, features = ["ecdsa"] }
+# The SOFTWARE-tier `SessionCipher`: pure-Rust AES-256-GCM (`aes-gcm`, RustCrypto), no_std/no_alloc
+# (default-features off; see `backends::software::session`'s module doc). `"aes"` is the block
+# cipher impl. `"zeroize"` is a real but PARTIAL improvement, stated honestly: it scrubs `aes-gcm`'s
+# own transient GHASH-subkey derivation buffer during construction (`aes_gcm::AesGcm`'s own
+# `#[cfg(feature = "zeroize")]` code, confirmed by reading its source) — it does NOT, by itself,
+# zeroize the persistent AES round-key schedule on drop (that needs the `aes` crate's OWN separate
+# `zeroize` feature, which this dependency graph does not additionally wire). This store's key
+# material is therefore exactly the `KeyCustody::SoftwareMemory` tier it honestly reports — normal
+# process memory, not additionally secure-erased beyond what's enabled here — same posture as
+# `SoftwareKeyStore` relying on `ecdsa::SigningKey`'s own Drop impl for the ECDSA arena.
+aes-gcm = { workspace = true, optional = true, default-features = false, features = ["aes", "zeroize"] }
+
+[features]
+# Default: host build (std) at the SOFTWARE tier, with the concrete software backend linked in —
+# standard crypto, keys in normal-world memory. This is the LOWEST tier (see SecurityProfile):
+# nothing is FIPS-validated, no hardware isolation. FIPS off ⇒ the crypto backend is software; the
+# `software` feature (below) is about which CONCRETE IMPLEMENTATION compiles in, not the tier
+# reported by `SecurityProfile` — `fips`/`trustzone` alone still decide that, unchanged.
+default = ["std", "software"]
+
+# FIPS 140-3 tier: operations run inside a FIPS-validated cryptographic module; power-on self
+# tests (KATs) run at provider construction; only approved algorithms are reachable. Selecting a
+# non-approved primitive is an error (SecurityError::NotApproved), never a silent fallback.
+fips = []
+
+# TrustZone tier: SESSION keys live in the secure world (ARM TrustZone-S / TF-M) and are referenced
+# by OPAQUE HANDLES only — key bytes never return to normal world. Also raises IDENTITY custody to
+# SecureWorld when `secure-element` is not additionally enabled (see `secure-element` below). With
+# this OFF, the affected custody is software memory (a strictly lower tier, reported per-purpose by
+# SecurityProfile and never silently equivalent).
+trustzone = []
+
+# Secure-element tier: the IDENTITY key (only) lives in a discrete secure element (e.g. an SE05x,
+# discrete TPM) behind its own hardware boundary, referenced by an OPAQUE HANDLE — the strongest
+# custody tier SecurityProfile models. A posture flag like `trustzone` (no deps) until a concrete
+# secure-element backend lands. Composes with `trustzone`: `secure-element` alone raises identity
+# custody only — SESSION keys still need `trustzone` to move off software custody; see
+# `SecurityProfile::active`'s doc for the exact per-purpose derivation and
+# `SecurityProfile::tier_slug`'s doc for why this never introduces a new slug spelling
+# (weakest-custody-wins across the two purposes).
+secure-element = []
+
+# std/alloc surface for host-side token/cert verification (X.509 chains, JWT). The no_std core
+# (rng/hash/sign over slices + opaque handles) is available without this for the MCU path.
+std = []
+
+# wolfCrypt concrete backend (OFF by default). Supplies WolfRng/WolfHasher/WolfVerifier/WolfKeyStore
+# bound to wolfCrypt's RustCrypto trait surface (digest/signature). Composes with `fips` (wolfCrypt
+# FIPS mode) and does NOT change the fail-closed default. REQUIRES a system wolfSSL 5.9.1+ library at
+# link time (NOT vendored) — for the `fips` tier a FIPS 140-3 validated wolfCrypt module. It is
+# therefore a SEPARATE BUILD LEDGER (like the Zephyr `west` target): it does not link in the default
+# CI/dev environment here, or in the main CI gate — only in `.github/workflows/wolfcrypt.yml`. Build
+# it on a wolfSSL-equipped host with `--features wolfcrypt`.
+wolfcrypt = ["dep:wolfssl-wolfcrypt", "dep:digest", "dep:signature", "dep:rand_core"]
+
+# Software concrete backend (ON by default). Supplies SoftwareKeyStore/SoftwareVerifier/
+# SoftwareTokenVerifier over `p256`/`ecdsa`, and SoftwareSessionStore over `aes-gcm` — pure Rust, no
+# system library, no_std/no_alloc. This is NOT a FIPS backend and never claims to be; it is the
+# honest, exfiltrable-by-a-compromised-host SOFTWARE tier (`KeyCustody::SoftwareMemory`) — see
+# `backends::software`'s module doc.
+software = ["dep:p256", "dep:aes-gcm"]
+
+[dev-dependencies]
+# Fixture + parameterized (case/values) test matrix over the security tiers, algorithms, and
+# operations — the seam's whole point is that every tier × algorithm combination behaves correctly.
+rstest = { workspace = true, default-features = false }
+
+[lints]
+workspace = true

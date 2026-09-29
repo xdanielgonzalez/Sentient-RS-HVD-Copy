@@ -1,0 +1,56 @@
+[package]
+publish = false            # host/std-only dev crate — never published, never a runtime dependency
+name = "test-acceptance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Human-readable cucumber-rs (Gherkin) spec-alignment suite: Seplos -> Canonical -> TMS (MIL-STD-3071) field correctness, in-process, reusing the real test-kit/lib-parse/lib-mapping code (zero re-implementation). Host/std-only dev crate; the `cucumber` test binary is `harness = false` and therefore NOT nextest-runnable (see `just test-acceptance`, not `test-e2e`) — never a dependency of the no_std MCU build."
+
+[[test]]
+name = "cucumber"
+harness = false
+
+[dev-dependencies]
+cucumber = "0.21"
+tokio = { workspace = true }
+
+# Code under test — reused verbatim, never re-implemented here.
+test-kit = { workspace = true }
+lib-io = { workspace = true, features = ["host"] }
+lib-parse = { workspace = true, features = ["seplos", "voltronic", "std"] }
+lib-mapping = { workspace = true, default-features = true }
+lib-tms = { workspace = true }
+lib-canonical = { workspace = true }
+heapless = { workspace = true }
+serde_json = { workspace = true }
+serde-json-core = { workspace = true }
+# Used by the security/authz step definitions (tests/steps/security.rs): the software crypto
+# backend (KeyStore/Verifier/TokenVerifier) + tiers/FIPS gate.
+lib-security = { workspace = true, features = ["std", "software"] }
+# lib-net owned-net + publish modules under test: `tls` (→ `link` + `std`) pulls in
+# `link::tls_identity::KeyStoreTlsIdentity` for security.feature's KeyStoreTlsIdentity scenario and
+# `link::mqtt_{client,session}` for mqtt_spec.feature; `mesh` (→ `mesh` + `locate`) pulls in
+# `mesh::condense` + the `locate::LocationFix`/`LocationSource` fixtures for meshtastic_condense.feature.
+lib-net = { workspace = true, features = ["tls", "mesh"] }
+# `rustls` types (`CertificateDer`, `SignatureScheme`) are part of `KeyStoreTlsIdentity`'s own
+# public API surface (`certified_key(): Result<Arc<CertifiedKey>, _>`), so exercising it directly
+# (mirroring test-e2e/tests/tls_identity_software.rs) needs the crate itself, not just lib-link.
+rustls = { workspace = true }
+# `BrokerConfig::default()` (the fail-closed-by-default auth posture) for authz.feature.
+lib-mqtt = { workspace = true }
+# `bin_rpi_platform::HostPlatform::build_port` for multi_port.feature (#238/#242) — the real
+# platform/broker fan-out seam, not a re-implementation (ADR 0009: the adapter, not the policy).
+bin-rpi-platform = { workspace = true }
+# No `steps/*.rs` names `impl_app::` directly (only `bin_rpi_platform::` types above) — kept as a
+# plain dependency (no `inverter` feature; nothing here drives `run_inverter`/`run_cycle_inverter`)
+# per the app-layer wrapper list in deny.toml.
+impl-app = { workspace = true }
+# `lib_io::persist::run_writer`/`JsonlPolicy` for disk_logging.feature (#55/#56/#57) — drives the
+# real writer task end-to-end against a real tempdir, never a re-implementation of the rotation/
+# disk-full logic under test. (mesh::condense + locate fixtures for meshtastic_condense.feature are
+# provided by the lib-net dependency above, via its `mesh` feature.)
+
+[lints]
+workspace = true

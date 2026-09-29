@@ -1,0 +1,151 @@
+name: Production Release
+
+# PRODUCTION release lane — builds + CMS-signs every artifact and publishes a signed GitHub Release.
+# Runs on a `v*.*.*` tag push OR a `workflow_dispatch` (publish=true + version). The dispatch path is
+# how uat.yml's `promote` job AUTO-CUTS the dated pre-release CANDIDATE `vYYYY.MMDD.<run_id>` on every
+# green merge to main. Whether the Release publishes as a pre-release or a full release is decided here
+# from the SIGNING TIER (self-signed ⇒ pre-release; CA-chained ⇒ full — see validate-signing).
+#
+# A pre-release candidate is later elevated to a FULL release — SAME version, SAME tested artifacts,
+# no rebuild — by promote.yml, gated on an explicit manual approval (private repos on Team can't
+# use native environment reviewers). That is the human production-stage gate; this workflow does not
+# itself flip a published release's tier.
+#
+# BASE/APP SPLIT (sysext): the shipping Pi OS image is built + signed ONCE by image.yml/_yocto.yml
+# (path-filtered on distro/**) and cached in a MinIO "golden store". This workflow no longer rebuilds
+# the whole image per release — it PULLS the pre-signed base `.wic` per machine and separately builds
+# + signs a small systemd-sysext extension (`sentient-app-sysext`) carrying just the fresh bin-rpi.
+#
+# Thin orchestrator, ci.yml-style — each lane below imports a reusable workflow (`_*.yml`) that owns
+# the actual steps (`needs:` still resolves across the split because reusable-workflow jobs are jobs
+# of THIS workflow):
+#   validate-signing -> inline          fast SIGNING_* preflight, decides the release tier
+#   build            -> _release-build.yml    bin-rpi glibc matrix + musl static (both `bin-rpi-*`)
+#   sysext           -> _release-sysext.yml   app sysext build+sign, pulls the pre-signed base .wic
+#   mcu              -> _mcu-build.yml        MCU firmware chip matrix (RP2350 today); its ELF(s)
+#                        become release assets via `release` below (attached, NOT in
+#                        .ci/release-required-assets.txt — informational HIL artifact, not yet a
+#                        signed/verified-boot shipping image; Gate-0 secure bootloader is #351,
+#                        deferred).
+#   release          -> _release-publish.yml  aggregate, sign, publish, verify assets
+#
+# The Zephyr MCU emulation firmware lane (`zephyr` -> _release-zephyr.yml) and the Renode MCU
+# boot-smoke lane (`mcu-boot-smoke` -> _emulation.yml) were retired with the Zephyr MCU path
+# (EPIC #350, story #352: MCU runtime pivot Zephyr -> Embassy) — both had been `if: false` /
+# skipped (#191) since before the pivot. The MCU (bin/mcu-rp2350, its own excluded workspace) gets its
+# first release-lane presence here (story #366): the `mcu` job publishes the firmware ELF(s) as
+# build artifacts, and `release` attaches them to the GitHub Release. The Renode boot-smoke gate
+# these retired lanes once fed stays deferred pending #191 — unrelated to, and unaffected by, this
+# ELF-publishing addition.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  # Manual/automated dispatch. Default (publish=false) builds all artifacts WITHOUT publishing — a dry
+  # run. The AUTO-CUT path is uat.yml's `promote` job: on a green UAT it dispatches this with
+  # publish=true + a CalVer `version` (vYYYY.MMDD.<run_id>), and the release lane publishes + creates
+  # the tag. Dispatch (not a token-pushed tag) is used because a tag pushed by GITHUB_TOKEN would NOT
+  # trigger this workflow — workflow_dispatch is the exception that runs under GITHUB_TOKEN.
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a GitHub Release (+ create the tag). false = build/sign only (dry run).
+        type: boolean
+        required: false
+        default: false
+      version:
+        description: Version to release when publish=true, WITHOUT leading v (e.g. 2026.0713.123). Ignored on tag pushes.
+        type: string
+        required: false
+        default: ''
+
+# Serialize releases (do NOT cancel-in-progress: a running tag-triggered publish must finish, not
+# be silently killed by a subsequent manual dispatch or tag push racing it).
+concurrency:
+  group: release-${{ github.ref }}
+
+permissions: {}
+
+jobs:
+  # Fast SIGNING_* preflight: validate the X.509 signing materials in SECONDS (decode + a throwaway
+  # CMS sign/verify against the CA — the EXACT flow the .wic + binary signing use), so a bad or mis-
+  # provisioned secret fails HERE cheaply instead of after the hours-long build. Gates `release`.
+  validate-signing:
+    name: validate SIGNING_* secrets
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      # release  = signer chains to CA_CRT (full, trusted release)
+      # prerelease = signature is cryptographically valid but the cert is self-signed / not CA-issued
+      #              (e.g. the CN=example.local placeholder) — publish as a GitHub pre-release
+      tier: ${{ steps.classify.outputs.tier }}
+    steps:
+      # Local composite actions resolve from the job's workspace — without this checkout the
+      # runner errors "Can't find 'action.yml' ... under .github/actions/cms-sign" and the whole
+      # release is blocked (this job gates `release` via needs). The pre-#216 inline openssl
+      # version needed no checkout, which is why the extraction silently dropped it.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: CMS sign+verify a throwaway blob with the provisioned SIGNING_*
+        id: classify
+        uses: ./.github/actions/cms-sign
+        with:
+          signing-key: ${{ secrets.SIGNING_KEY }}
+          signing-crt: ${{ secrets.SIGNING_CRT }}
+          ca-crt: ${{ secrets.CA_CRT }}
+          mode: validate
+
+  # bin-rpi release builds: the glibc contract target (matrix) + the musl-static artifact the app
+  # sysext packages. Full rationale (native cross vs `cross`, why musl is its own job) in the file.
+  build:
+    name: bin-rpi builds
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_release-build.yml
+    secrets: inherit
+
+  # App sysext build+sign per shipping machine + pre-signed base pull from the MinIO golden store.
+  # `needs: build` because the sentient-agent-bin BitBake recipe is a PREBUILT-BINARY recipe — it
+  # consumes the musl artifact `build` uploads (no Rust toolchain runs inside BitBake).
+  sysext:
+    name: app sysext
+    needs: build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_release-sysext.yml
+    secrets: inherit
+
+  # MCU firmware chip matrix (RP2350 today; see _mcu-build.yml's header for how to add a chip).
+  # Plain rust cross-build, no docker/buildx — light enough to run alongside `build`/`sysext`
+  # without adding a new heavy/contended lane (the serialization doctrine is about NOT racing
+  # image.yml/uat.yml's Yocto + qemu lanes, not about this).
+  mcu:
+    name: MCU firmware
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_mcu-build.yml
+    secrets: inherit
+
+  # validate-signing gates the release: a bad SIGNING_* fails fast (seconds) before publishing.
+  # `mcu` gates it too now: the release job downloads EVERY artifact from this run (no `pattern` —
+  # see _release-publish.yml's own note), so it needs the chip matrix's mcu-firmware-* artifacts to
+  # exist before it runs, the same way it needs `build`'s bin-rpi-* and `sysext`'s sentient-*.
+  release:
+    name: publish release
+    needs: [validate-signing, build, sysext, mcu]
+    # Only publish on an actual tag; workflow_dispatch runs build the artifacts without releasing.
+    # Publish on a real v-tag push OR an auto-cut dispatch (publish=true). A plain dispatch
+    # (publish=false) builds the artifacts but skips this lane — the dry-run path.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+    permissions:
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/_release-publish.yml
+    with:
+      version: ${{ inputs.version }}
+      tier: ${{ needs.validate-signing.outputs.tier }}
+    secrets: inherit

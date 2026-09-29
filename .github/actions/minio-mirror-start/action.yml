@@ -1,0 +1,71 @@
+name: Start MinIO mirror write-through
+description: >-
+  Start the CONTINUOUS `mc mirror --watch` write-through for the Yocto sstate/downloads caches.
+  `mc mirror --watch` inotify-watches the local sstate/downloads dirs and uploads each object to
+  MinIO AS BitBake produces it (per-task, not one batch at the end), so the mirror stays warm even
+  if the POD is hard-killed (k8s OOM-kill / node eviction) before the paired minio-mirror-stop
+  action's `if: always()` final sweep can run. Runs as root (can read the builder-owned cache); the
+  paired stop action stops the watchers + does a reconciling sweep. Composite actions cannot read
+  `secrets.*` implicitly, so the MinIO credentials are taken as explicit inputs.
+  Background-process contract: watchers are `nohup`'d + `disown`'d so they survive this step and run
+  CONCURRENTLY with the build step that follows; their PIDs are appended to /tmp/mc-watch.pids on the
+  runner filesystem, which the paired minio-mirror-stop action reads.
+
+inputs:
+  mc-endpoint:
+    description: MinIO S3 endpoint (e.g. http://minio-cache-direct.minio-tenant.svc:9000).
+    required: true
+  mc-key:
+    description: MinIO access key (secrets.CACHE_AWS_KEY).
+    required: true
+  mc-secret:
+    description: MinIO secret key (secrets.CACHE_AWS_SECRET).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Start MinIO mirror write-through (continuous)
+      shell: bash
+      env:
+        MC_ENDPOINT: ${{ inputs.mc-endpoint }}
+        MC_KEY: ${{ inputs.mc-key }}
+        MC_SECRET: ${{ inputs.mc-secret }}
+      run: |
+        set -uo pipefail
+        : > /tmp/mc-watch.pids
+        command -v mc >/dev/null 2>&1 || { echo "::warning::mc not in image — continuous write-through off (final sweep only)"; exit 0; }
+        mkdir -p /opt/yocto-cache/sstate-cache /opt/yocto-cache/downloads
+        # Capture the REAL mc error (was masked by >/dev/null, hiding WHY the sstate mirror never
+        # engaged → cold builds + OOM every run). mc prints the failure reason (dial/DNS to the
+        # endpoint vs "provided credentials"); it does NOT echo the secret. Also report whether the
+        # creds are even populated (empty GH secret is a common cause) without printing their values.
+        if ! err="$(mc alias set minio "$MC_ENDPOINT" "$MC_KEY" "$MC_SECRET" 2>&1)"; then
+          echo "::warning::mc alias set failed — continuous write-through off. endpoint=$MC_ENDPOINT key_set=$([ -n "${MC_KEY:-}" ] && echo yes || echo NO) secret_set=$([ -n "${MC_SECRET:-}" ] && echo yes || echo NO) — mc_error: ${err}"
+          exit 0
+        fi
+        # DIAGNOSTICS — the mirror wasn't seeding (Mirrors=294, same as cold): prove whether prior
+        # uploads landed AND whether the anonymous-read policy the HTTP read side needs is actually set.
+        echo "::group::mirror diagnostics (read-side ground truth)"
+        echo "objects already in remote cache/sstate (from prior runs):"
+        mc ls --recursive --summarize minio/cache/sstate/ 2>&1 | tail -2 || echo "  mc ls FAILED rc=$?"
+        echo "current anonymous policy on cache/sstate (must be 'download' for wget reads):"
+        mc anonymous get minio/cache/sstate 2>&1 || echo "  mc anonymous get FAILED rc=$?"
+        echo "::endgroup::"
+        # Open the prefixes for the anonymous HTTP GETs the read side does — LOUD on failure (a robot
+        # account without s3:PutBucketPolicy silently leaves reads 403 -> the mirror never hits).
+        for p in sstate downloads; do
+          if ! err="$(mc anonymous set download "minio/cache/$p" 2>&1)"; then
+            echo "::warning::mc anonymous set download cache/$p FAILED: ${err} — reads will 403; set it once as MinIO admin"
+          fi
+        done
+        # One watcher per prefix; --watch does an initial sync then streams new objects. No --remove
+        # (accumulate). Log to a FILE (not /dev/null) so the stop step can report upload activity.
+        # disown so it survives THIS step and runs concurrently with the build step.
+        for d in sstate-cache:sstate downloads:downloads; do
+          nohup mc mirror --watch --overwrite "/opt/yocto-cache/${d%%:*}/" "minio/cache/${d##*:}/" \
+            > "/tmp/mc-watch-${d##*:}.log" 2>&1 &
+          echo $! >> /tmp/mc-watch.pids
+          disown 2>/dev/null || true
+        done
+        echo "::notice::mc write-through watchers started: $(tr '\n' ' ' < /tmp/mc-watch.pids)"

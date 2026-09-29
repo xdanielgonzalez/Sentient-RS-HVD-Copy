@@ -1,0 +1,14 @@
+apiVersion: v2
+name: sentient-viz
+description: >-
+  MQTT visualization + simulation stack: seplos-tcp-sim battery simulator feeding the
+  real bin-rpi adapter (embedded rumqttd broker), with telemetry flowing
+  MQTT -> Telegraf -> InfluxDB v2 -> Grafana (provisioned dashboards, full history).
+type: application
+version: 0.1.0
+appVersion: "0.2.3"
+keywords:
+  - mqtt
+  - grafana
+  - telemetry
+  - simulation

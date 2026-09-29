@@ -1,0 +1,29 @@
+[book]
+title = "sentient-rs"
+description = "Sentient Meteor TMS (MIL-STD-3071) adapter — project documentation"
+authors = ["High Velocity Decisions"]
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+additional-css = ["docs/theme/hvd.css"]
+additional-js = ["docs/theme/mermaid.min.js", "docs/theme/mermaid-init.js"]
+git-repository-url = "https://github.com/High-Velocity-Decisions/sentient-rs"
+
+[output.html.fold]
+enable = true
+level = 1
+
+# NOTE: [output.linkcheck] (mdbook-linkcheck 0.7.7) is omitted — it cannot parse the mdbook
+# 0.5.x RenderContext ("missing field `sections`"); re-add when a 0.5-compatible release ships.
+# With the html backend alone, mdbook renders directly into build-dir: the site root is book/
+# (NOT book/html/).

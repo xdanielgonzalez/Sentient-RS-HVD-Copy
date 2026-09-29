@@ -1,0 +1,496 @@
+name: _yocto (reusable)
+
+# Reusable workflow — BUILD ONLY the BASE `sentient-image` (the GOLDEN/shipping OS image, now APP-FREE
+# post sysext-split: bin-rpi is no longer baked in, it ships as a separately-signed systemd-sysext
+# extension built + signed by production.yml) and publish it: run the heavy `kas build sentient-image`
+# per MACHINE, CMS-sign the shipping `.wic`, stage the deploy dir/bootable bundle + signed base to
+# MinIO/GitHub, and publish the dated pre-release that uat.yml consumes. Called by image.yml
+# (path-filtered on distro/**), so the base rebuild happens ONLY when the image inputs actually change.
+#
+# SEPARATION OF CONCERNS: this workflow does NOT test the image. Boot / preflight / Seplos->TMS->MQTT
+# Robot e2e all live in uat.yml, which boots the golden image with the freshly-built bin-rpi slotted
+# in — that is where functional testing belongs. Future IMAGE-level testing (security scans, license/
+# compliance, SBOM/cve-check gates) would attach HERE, but is not wired yet. Keep robot/e2e out.
+#
+# ARTIFACT SPLIT (post sysext-split): this workflow builds + signs the BASE OS `.wic` ONLY, for BOTH
+# the qemuarm64 emulation golden (UAT boot target, unsigned bootable bundle as before) AND the two
+# shipping machines (raspberrypi5, raspberrypi4-64), signed with the same X.509 CMS pattern
+# production.yml uses for its release artifacts. production.yml PULLS the shipping-machine signed base
+# from the MinIO golden store rather than rebuilding it, and separately builds + signs the app
+# `sentient-app-sysext` extension. The base image recipe no longer stages bin-rpi at all.
+#
+# GATING: heavy lane, NOT the fast PR gate — driven by image.yml (push to main filtered on distro/**)
+# or on-demand workflow_dispatch, never ci.yml's push/pull_request fast path. ARM only.
+#
+# TODO(verify-at-build): authored GREENFIELD against a locally-validated build (native kas 4.4,
+# qemuarm64) but treat the first real run as bring-up. Specific unknowns are marked inline.
+# TODO(verify-at-build): confirm the raspberrypi5/raspberrypi4-64 `.wic`/`.wic.bz2` filename +
+# deploy-dir convention here matches production.yml's `yocto`-job-turned-`sysext`-job assumptions
+# (build/tmp/deploy/images/<machine>/sentient-image-*.wic(.bz2)) — this mirrors the prior yocto job in
+# production.yml but has not been confirmed against a real shipping-machine build tree.
+
+on:
+  workflow_call:
+    secrets:
+      CACHE_AWS_KEY:
+        required: false
+      CACHE_AWS_SECRET:
+        required: false
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ---------------------------------------------------------------------------------------------
+  # Build the BASE image once (per MACHINE) and SAVE it. qemuarm64 is the faithful Pi 4/5 aarch64
+  # emulation stand-in (bare raspberrypi5 images are not runqemu-bootable) and remains the UAT boot
+  # target — its bundle/publish shape is UNCHANGED (unsigned bootable bundle, uat.yml still consumes
+  # it exactly as before). raspberrypi5 + raspberrypi4-64 are the SHIPPING bases: same `sentient-image`
+  # kas target, machine-specific kas config overlay, ADDITIONALLY CMS-signed + staged to the MinIO
+  # golden store below so production.yml can pull a pre-signed base instead of rebuilding it. ARM ONLY
+  # (x86 is not a supported platform) — `max-parallel: 1` because the ARC pool OOMs on concurrent
+  # from-scratch Yocto builds (same constraint as the old per-machine `yocto` job in production.yml).
+  # ---------------------------------------------------------------------------------------------
+  build-image:
+    name: build sentient-image (${{ matrix.machine }})
+    runs-on: arc-runner-set
+    # contents: write so the pre-release publish step below can create the dated pre-release (the
+    # workflow-level default is contents: read). Only this job needs it.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      # max-parallel: 1 — ARC pool OOM constraint (see .ci notes / MEMORY: "Serialize heavy CI runs").
+      # Three from-scratch-capable Yocto builds (one emulation golden + two shipping bases) must not
+      # run concurrently on the small ARC pool.
+      max-parallel: 1
+      matrix:
+        # ARM ONLY. qemuarm64 = emulation golden (UAT boot target, unsigned bundle, unchanged shape).
+        # raspberrypi5 / raspberrypi4-64 = shipping bases (signed .wic, staged to the MinIO golden
+        # store for production.yml to pull). kas_config mirrors production.yml's former `yocto` job
+        # matrix: raspberrypi4-64 overlays sentient-rpi4.yml on top of the base sentient.yml.
+        include:
+          - machine: qemuarm64
+            kas_config: distro/kas/sentient.yml
+            shipping: false
+          - machine: raspberrypi5
+            kas_config: distro/kas/sentient.yml
+            shipping: true
+          - machine: raspberrypi4-64
+            kas_config: distro/kas/sentient.yml:distro/kas/sentient-rpi4.yml
+            shipping: true
+    # TODO(verify-at-build): pin by digest once sentient-yocto-builder is built + published
+    # (`just publish-images`) — same TODO as production.yml on this image ref; accepted in .github/zizmor.yml.
+    #
+    # The image DEFAULTS TO ROOT (no `USER builder`) so the ARC runner's root-owned file-command dir
+    # (/__w/_temp/_runner_file_commands/) is writable — a non-root default makes actions/checkout
+    # EACCES before any step, and ARC's k8s containerMode ignores a `--user` override. BitBake refuses
+    # root, so the kas step below drops to `builder` via runuser.
+    container: rust-mirror:443/sentient/sentient-yocto-builder@sha256:38693df6f9fef0668e05ab88506c702d2138258e4718a9fd0a6490ab43485298
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      # sstate + downloads reuse is a MinIO MIRROR, not a tarball cache. BitBake READS prebuilt objects
+      # on demand from MinIO's HTTP gateway (SSTATE_MIRRORS / SOURCE_MIRROR_URL in distro/kas/sentient.yml)
+      # — so there is NO restore step; the local SSTATE_DIR starts empty and fills from the mirror. The
+      # WRITE side is the `mc mirror` step AFTER the build (below): it runs `if: always()`, so a partial/
+      # OOM'd build still uploads every sstate object it produced and the next run downloads instead of
+      # recompiling. This replaces the old runs-on/cache tarball (all-or-nothing, post-if:success() —
+      # it silently dropped ~1h30m of sstate on the OOM'd run).
+
+      # NOTE (post sysext-split): the base `sentient-image` recipe NO LONGER packages a prebuilt bin-rpi
+      # — the app ships separately as the `sentient-app-sysext` extension (production.yml's `sysext`
+      # job), which stages its OWN musl bin-rpi into the recipe files dir at release-build time. This
+      # job therefore no longer builds/stages bin-rpi at all; the base image is agent-free.
+
+      # CONTINUOUS write-through — `mc mirror --watch` inotify-watches the local sstate/downloads dirs and
+      # uploads each object to MinIO AS BitBake produces it (per-task, not one batch at the end). So the
+      # mirror stays warm even if the POD is hard-killed (k8s OOM-kill / node eviction) before the
+      # `if: always()` final-sweep step can run — that step only fires on STEP failure, not pod death.
+      # Runs as root (can read the builder-owned cache); the post step stops it + does a reconciling sweep.
+      - name: Start MinIO mirror write-through (continuous)
+        uses: ./.github/actions/minio-mirror-start
+        with:
+          mc-endpoint: http://minio-cache-direct.minio-tenant.svc:9000
+          mc-key: ${{ secrets.CACHE_AWS_KEY }}
+          mc-secret: ${{ secrets.CACHE_AWS_SECRET }}
+
+      - name: Build sentient-image (kas)
+        shell: bash
+        env:
+          KAS_MACHINE: ${{ matrix.machine }}
+          KAS_WORK_DIR: ${{ github.workspace }}/yocto
+          # Point BitBake's caches at the restored cache paths (see the cache step).
+          DL_DIR: /opt/yocto-cache/downloads
+          SSTATE_DIR: /opt/yocto-cache/sstate-cache
+        run: |
+          set -euo pipefail
+          # Memory-capped BitBake parallelism (cgroup-aware CPU count x RAM/4GB-per-recipe cap) —
+          # extracted into a shared script (also used by production.yml's `sysext` job) since the
+          # exact formula must stay in lockstep across both call sites. See the script for the
+          # full derivation/rationale.
+          PARCONF="$GITHUB_WORKSPACE/yocto-limits.yml"
+          "$GITHUB_WORKSPACE/.ci/scripts/yocto-parallel-fragment.sh" "$PARCONF"
+          # BitBake refuses root, so run kas as the non-root `builder` via the shared kas harness
+          # (mkdir -p $KAS_WORK_DIR + chown + runuser drop). Hand it the runner-checked-out
+          # workspace + staged bin-rpi + caches + the limits fragment, then drop privileges.
+          export CHOWN_PATHS="$KAS_WORK_DIR $GITHUB_WORKSPACE/distro $PARCONF /opt/yocto-cache"
+          # matrix.kas_config is qemuarm64's plain sentient.yml, or the shipping machines' overlay
+          # (sentient.yml:sentient-rpi4.yml for raspberrypi4-64) — see the matrix `include:` above.
+          KASCFG="${{ matrix.kas_config }}:$PARCONF"
+          # PROGRESS-ONLY REPORTING: pipe every BitBake invocation through the shared log filter so
+          # the console shows a throttled progress heartbeat + all warnings/errors/summaries instead
+          # of the per-task NOTE flood (knotty, no TTY, prints one line per task — 5k–15k lines/build).
+          # `set -o pipefail` (above) keeps BitBake's real exit code authoritative across the pipe.
+          BBFILTER="$GITHUB_WORKSPACE/.ci/scripts/bitbake-log-filter.py"
+          run_kas() { "$GITHUB_WORKSPACE/.ci/scripts/run-kas.sh" shell "$KASCFG" -c "$1" | python3 "$BBFILTER"; }
+          # 1) PARSE GATE — fail fast (~minutes) on any config/recipe-parse error (variable renames,
+          #    removed/moved classes, `S=${WORKDIR}`, bbappend syntax) BEFORE a single task runs, so a
+          #    parse regression never costs a multi-hour build to discover.
+          run_kas "bitbake -p"
+          # DIAGNOSTIC: confirm OUR MinIO mirror is actually in the effective read config — the mirror
+          # wasn't hitting (Mirrors=294, cold), and the read side left no MinIO trace in the log, so the
+          # config merge itself is suspect. Cheap (reuses the warm parse cache).
+          echo "::group::effective mirror read config"
+          run_kas "bitbake-getvar --value SSTATE_MIRRORS"    || echo "  (SSTATE_MIRRORS getvar failed)"
+          run_kas "bitbake-getvar --value SOURCE_MIRROR_URL" || echo "  (SOURCE_MIRROR_URL getvar failed)"
+          echo "::endgroup::"
+          # 2) BUILD with --continue (-k): keep going after a task failure so EVERY failing recipe
+          #    (e.g. our do_install bbappends) is reported in ONE run instead of one-per-run. The
+          #    always-save step below preserves the sstate of everything that DID build.
+          run_kas "bitbake -k sentient-image"
+
+      # STOP the write-through watchers + FINAL reconciling sweep — `if: always()` so it runs on success,
+      # failure, or cancel. The watchers already streamed most objects during the build; this catches any
+      # written after their last inotify event and is the backstop if `mc --watch` wasn't available. `mc
+      # mirror` is incremental + never deletes remote objects, so the mirror ACCUMULATES across runs.
+      - name: Stop write-through + final mirror sweep (always)
+        if: always()
+        uses: ./.github/actions/minio-mirror-stop
+        with:
+          mc-endpoint: http://minio-cache-direct.minio-tenant.svc:9000
+          mc-key: ${{ secrets.CACHE_AWS_KEY }}
+          mc-secret: ${{ secrets.CACHE_AWS_SECRET }}
+
+      # --- qemuarm64 EMULATION GOLDEN path (unchanged shape) -----------------------------------------
+      # Collect a SELF-CONTAINED, boot-ready image bundle (deref symlinks). uat.yml downloads this
+      # bundle (from the pre-release), reconstructs the deploy dir, slots in the freshly-built bin-rpi,
+      # and boots it under runqemu — so this bundle is the golden image UAT reuses instead of rebuilding.
+      # Gated to the emulation golden (shipping == false); the shipping machines use the `.wic`-signing
+      # path further below instead, since they are never booted by runqemu here.
+      - name: Collect bootable image bundle
+        if: matrix.shipping == false
+        shell: bash
+        env:
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          set -euo pipefail
+          D="yocto/build/tmp/deploy/images/${MACHINE}"
+          out="image-out"; mkdir -p "$out"
+          echo "=== deploy dir: $D ==="; ls -la "$D" 2>/dev/null || { echo "::error::deploy dir missing — kas build produced no images"; exit 1; }
+          # Pick exactly ONE match (excluding initramfs variants). The deploy dir carries BOTH a real
+          # file and a stable symlink for most artifacts (e.g. sentient-image-qemuarm64-<ts>.qemuboot.conf
+          # AND sentient-image-qemuarm64.qemuboot.conf), so a bare glob expands to >1 arg and
+          # `cp <many> <single-dest>` fails. `pick` collapses to one.
+          pick() { ls -1 "$@" 2>/dev/null | grep -iv initramfs | head -1 || true; }
+          # rootfs (tolerant of fstype/naming), qemuboot.conf, kernel — all ESSENTIAL for uat.yml to
+          # reconstruct + boot. FAIL LOUD if any is missing: a bundle without one is an unbootable golden.
+          # (A prior silent `cp ... || true` shipped a golden with NO qemuboot.conf, so uat couldn't boot.)
+          rootfs="$(pick "$D"/sentient-image-*.rootfs.ext4 "$D"/sentient-image-*.ext4 "$D"/sentient-image-*.rootfs.ext3)"
+          qboot="$(pick "$D"/*.qemuboot.conf)"
+          kernel="$(pick "$D"/Image)"   # qemuarm64 kernel is Image (ARM only)
+          [ -n "$rootfs" ] || { echo "::error::no ext4 rootfs in $D (need IMAGE_FSTYPES += ext4)"; exit 1; }
+          [ -n "$qboot"  ] || { echo "::error::no *.qemuboot.conf in $D — runqemu needs it to boot"; exit 1; }
+          [ -n "$kernel" ] || { echo "::error::no kernel Image in $D"; exit 1; }
+          cp -L "$rootfs" "$out"/rootfs.ext4
+          cp -L "$qboot"  "$out"/qemuboot.conf
+          cp -L "$kernel" "$out"/kernel
+          # provenance for the report (non-essential): the rootfs manifest (package list).
+          m="$(pick "$D"/sentient-image-*.rootfs.manifest "$D"/sentient-image-*.manifest)"
+          [ -n "$m" ] && cp -L "$m" "$out"/image.manifest || echo "::warning::no rootfs manifest in $D"
+          ls -la "$out"
+
+      # PUBLISH the bootable bundle as a GitHub artifact (portable + human-downloadable straight from the
+      # Actions run). This + the dated pre-release below are the deliverables uat.yml pulls from; the
+      # heavy image is NOT re-staged to MinIO here (nothing consumes an in-cluster copy anymore — uat.yml
+      # downloads the pre-release tarball). `image-out` is the self-contained rootfs.ext4 + kernel +
+      # qemuboot.conf + manifest (deref'd) — boot locally with runqemu/qemu.
+      - name: Upload bootable image bundle (GitHub artifact)
+        if: matrix.shipping == false
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sentient-image-${{ matrix.machine }}
+          path: image-out/**
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      # PUBLISH the image as a dated PRE-RELEASE — persists indefinitely (unlike the 3-day artifact
+      # above), so it's the durable, downloadable deliverable. Tag = YYYYMMDD.<run_id>, one per build.
+      # Mirrors production.yml's softprops publish; needs the job's `contents: write` (set above). Both
+      # emulation MACHINEs in a workflow_call share the run_id, so they attach machine-named assets to
+      # the SAME dated pre-release.
+      - name: Pack pre-release bundle
+        if: matrix.shipping == false
+        id: prerel
+        shell: bash
+        # Pass context values via env, never interpolate ${{ }} directly into the shell (zizmor
+        # template-injection). Both are trusted here, but env is the correct, lint-clean form.
+        env:
+          RUN_ID: ${{ github.run_id }}
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          set -euo pipefail
+          TAG="$(date -u +%Y%m%d).${RUN_ID}"
+          TARBALL="sentient-image-${MACHINE}-${TAG}.tar.gz"
+          tar -czf "$TARBALL" -C image-out .
+          {
+            echo "tag=$TAG"
+            echo "tarball=$TARBALL"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::pre-release $TAG asset $TARBALL ($(du -h "$TARBALL" | cut -f1))"
+
+      # Sign the golden emulation bundle with the SAME X.509 CMS flow as the shipping .wic — so the
+      # sign -> stage -> pull -> verify chain is EXERCISED on the emulation image before we trust it on
+      # the shipping Pi .wic (uat.yml verifies this .p7s before booting). Same degrade as the shipping
+      # signer: CA-verify for a CA-issued cert, -noverify fallback for the self-signed example.local
+      # pre-release cert, hard fail only on an actually-invalid signature. Kept in lockstep with the
+      # "Sign .wic (X.509 CMS)" step below.
+      - name: Sign golden bundle (X.509 CMS)
+        if: matrix.shipping == false
+        uses: ./.github/actions/cms-sign
+        with:
+          signing-key: ${{ secrets.SIGNING_KEY }}
+          signing-crt: ${{ secrets.SIGNING_CRT }}
+          ca-crt: ${{ secrets.CA_CRT }}
+          files: ${{ steps.prerel.outputs.tarball }}
+
+      # Also stage the golden bundle to a FIXED MinIO key so uat.yml pulls it IN-CLUSTER (fast) rather
+      # than downloading the pre-release asset over the internet from GitHub (which was timing out).
+      # Same tarball, overwritten each golden build; the GitHub pre-release below stays the durable,
+      # browsable copy. Non-fatal — if this fails, uat.yml errors clearly ("no golden in MinIO").
+      # UNCHANGED — this is the exact artifact uat.yml consumes at minio/cache/golden/qemuarm64/
+      # sentient-image.tar.gz; do not touch key or shape.
+      - name: Stage golden image to MinIO (uat pulls this)
+        if: matrix.shipping == false
+        shell: bash
+        env:
+          MACHINE: ${{ matrix.machine }}
+          MC_ENDPOINT: http://minio-cache-direct.minio-tenant.svc:9000
+          MC_KEY: ${{ secrets.CACHE_AWS_KEY }}
+          MC_SECRET: ${{ secrets.CACHE_AWS_SECRET }}
+          TARBALL: ${{ steps.prerel.outputs.tarball }}
+        run: |
+          set -uo pipefail
+          # FAIL LOUD on a broken MinIO path. These two used to `exit 0` with a warning, which made a
+          # credential/endpoint failure indistinguishable from success: the job went GREEN, no golden
+          # was staged, and uat.yml only discovered it much later with "no golden image in MinIO".
+          # Warnings do not fail a run and nobody reads them on a green build — that is precisely how
+          # a 5-day sstate-mirror outage (MinIO's PV pointing at a dead NFS host) stayed invisible.
+          # A base image that cannot be staged is not a successful build of that image.
+          command -v mc >/dev/null 2>&1 || { echo "::error::mc not in image — cannot stage golden to MinIO"; exit 1; }
+          if ! err="$(mc alias set minio "$MC_ENDPOINT" "$MC_KEY" "$MC_SECRET" 2>&1)"; then
+            echo "::error::mc alias set failed — golden NOT staged to MinIO. endpoint=$MC_ENDPOINT key_set=$([ -n "${MC_KEY:-}" ] && echo yes || echo NO) secret_set=$([ -n "${MC_SECRET:-}" ] && echo yes || echo NO) — mc_error: ${err}"
+            exit 1
+          fi
+          DST="minio/cache/golden/${MACHINE}/sentient-image.tar.gz"
+          # Also hard — and note the old warning text here ("uat will fall back to the GitHub
+          # pre-release") was STALE: .ci/scripts/uat/pull-golden-base.sh has no fallback, it exits 1
+          # with "no golden image in MinIO at $SRC". A failed copy therefore breaks UAT outright, so
+          # it must not be reported as a warning on an otherwise-green build.
+          if ! mc cp "$TARBALL" "$DST"; then
+            echo "::error::mc cp of golden to $DST failed — uat.yml pulls the base from here and has no fallback"
+            exit 1
+          fi
+          echo "::notice::staged golden to MinIO: $DST ($(du -h "$TARBALL" | cut -f1))"
+          # Stage the detached signature + CA next to the golden so uat.yml verifies it BEFORE booting
+          # (proving the sign->verify chain on the emulation image before the shipping .wic ships).
+          if [ -f "$TARBALL.p7s" ]; then
+            # Hard: uat.yml's "Verify golden base signature (X.509 CMS)" step consumes this object,
+            # so losing it turns a green image build into a UAT failure later. (The ca.pem copy below
+            # stays soft — production.yml ships its own copy, so it has a real fallback.)
+            if ! mc cp "$TARBALL.p7s" "minio/cache/golden/${MACHINE}/sentient-image.tar.gz.p7s"; then
+              echo "::error::staging golden .p7s failed — uat.yml verifies the golden signature from this object"
+              exit 1
+            fi
+            echo "::notice::staged golden signature"
+            [ -f ca.pem ] && { mc cp ca.pem "minio/cache/golden/${MACHINE}/ca.pem" || echo "::warning::staging ca.pem failed"; }
+          else
+            echo "::notice::no golden signature to stage (signing secrets absent)"
+          fi
+      - name: Publish image pre-release
+        if: matrix.shipping == false
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          tag_name: ${{ steps.prerel.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: sentient-image ${{ steps.prerel.outputs.tag }}
+          prerelease: true
+          fail_on_unmatched_files: true
+          body: |
+            Yocto wrynose `sentient-image`, built by `_yocto.yml` run ${{ github.run_id }} on `${{ github.sha }}`.
+            Each `.tar.gz` asset is a self-contained bootable bundle (`rootfs.ext4` + `kernel` + `image.manifest`)
+            for its MACHINE — boots to multi-user under `runqemu`/`qemu`.
+          files: |
+            ${{ steps.prerel.outputs.tarball }}
+            ${{ steps.prerel.outputs.tarball }}.p7s
+            image-out/image.manifest
+            signing-cert.pem
+            ca.pem
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- SHIPPING MACHINE path (raspberrypi5 / raspberrypi4-64) ------------------------------------
+      # Collect the shipping `.wic`/`.wic.bz2` (the flashable image, NOT the qemuarm64 bootable-bundle
+      # shape above — no runqemu target consumes these) + its rootfs manifest, mirroring the artifact
+      # picking `production.yml` used in its former `yocto` job.
+      # TODO(verify-at-build): confirm the exact emitted filename convention here
+      # (sentient-image-<machine>-<datetime>.wic.bz2 vs a stable-symlinked sentient-image-<machine>.wic)
+      # against a real shipping-machine deploy dir — glob tolerantly (below) until confirmed.
+      - name: Collect shipping .wic (${{ matrix.machine }})
+        if: matrix.shipping == true
+        shell: bash
+        env:
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          set -euo pipefail
+          D="yocto/build/tmp/deploy/images/${MACHINE}"
+          out="wic-out"; mkdir -p "$out"
+          echo "=== deploy dir: $D ==="; ls -la "$D" 2>/dev/null || { echo "::error::deploy dir missing — kas build produced no images"; exit 1; }
+          shopt -s nullglob
+          copied=0
+          for f in "$D"/sentient-image-*.wic.bz2 "$D"/sentient-image-*.wic; do
+            [ -f "$f" ] || continue
+            cp -L "$f" "$out/$(basename "$f")"
+            copied=1
+          done
+          [ "$copied" = 1 ] || { echo "::error::no sentient-image-*.wic(.bz2) in $D"; exit 1; }
+          for f in "$D"/sentient-image-*.manifest; do
+            [ -f "$f" ] || continue
+            cp -L "$f" "$out/sentient-image-${MACHINE}.manifest"
+            break
+          done
+          ls -la "$out"
+
+      # X.509 CMS detached signature of the shipping `.wic`/`.wic.bz2`, against our self-signed CA
+      # (SIGNING_KEY/SIGNING_CRT signer + CA_CRT trust anchor) — EXACT pattern as production.yml's own
+      # "Sign .wic (X.509 CMS)" step (same degrade: CA-verify -> -noverify prerelease -> hard fail only
+      # on an actually-invalid signature). Kept in lockstep with that step; if one changes, mirror it
+      # in the other. Verify with:
+      #   openssl cms -verify -binary -content <img>.wic -in <img>.wic.p7s -inform DER -CAfile ca.pem
+      - name: Sign .wic (X.509 CMS)
+        if: matrix.shipping == true
+        uses: ./.github/actions/cms-sign
+        with:
+          signing-key: ${{ secrets.SIGNING_KEY }}
+          signing-crt: ${{ secrets.SIGNING_CRT }}
+          ca-crt: ${{ secrets.CA_CRT }}
+          working-directory: wic-out
+          files: sentient-image-*.wic sentient-image-*.wic.bz2
+
+      # Stage the SIGNED shipping base to the MinIO golden store — production.yml's `sysext` job pulls
+      # this per machine instead of rebuilding the base image itself. Key convention:
+      #   minio/cache/golden/<machine>/sentient-image.wic(.bz2) + sentient-image.wic(.bz2).p7s
+      # Overwritten on every base build (image.yml is path-filtered on distro/**, so this only reruns
+      # when the image inputs actually change) — production.yml always pulls the LATEST signed base for
+      # a given machine, independent of which app/binary revision is being released.
+      - name: Stage signed shipping base to MinIO golden store
+        if: matrix.shipping == true
+        shell: bash
+        env:
+          MACHINE: ${{ matrix.machine }}
+          MC_ENDPOINT: http://minio-cache-direct.minio-tenant.svc:9000
+          MC_KEY: ${{ secrets.CACHE_AWS_KEY }}
+          MC_SECRET: ${{ secrets.CACHE_AWS_SECRET }}
+        run: |
+          set -uo pipefail
+          command -v mc >/dev/null 2>&1 || { echo "::error::mc not in image — cannot stage signed base to MinIO"; exit 1; }
+          # Hard, same reasoning as the qemuarm64 golden staging above: production.yml pulls the
+          # SHIPPING base from this MinIO prefix at release time instead of rebuilding it, so a
+          # credential/endpoint failure here yields a green image build whose artifact simply is not
+          # where the release expects it — discovered only much later, at the cut.
+          if ! err="$(mc alias set minio "$MC_ENDPOINT" "$MC_KEY" "$MC_SECRET" 2>&1)"; then
+            echo "::error::mc alias set failed — signed base NOT staged to MinIO. endpoint=$MC_ENDPOINT key_set=$([ -n "${MC_KEY:-}" ] && echo yes || echo NO) secret_set=$([ -n "${MC_SECRET:-}" ] && echo yes || echo NO) — mc_error: ${err}"
+            exit 1
+          fi
+          cd wic-out
+          shopt -s nullglob
+          ok=1
+          for f in sentient-image-*.wic sentient-image-*.wic.bz2; do
+            [ -f "$f" ] || continue
+            ext="${f#sentient-image-${MACHINE}}"        # e.g. -<ts>.wic.bz2 or .wic.bz2
+            ext="${ext#-*}"                              # strip a leading timestamp segment if present
+            case "$f" in
+              *.wic.bz2) dst_name="sentient-image.wic.bz2" ;;
+              *.wic)     dst_name="sentient-image.wic" ;;
+              *) dst_name="$f" ;;
+            esac
+            DST="minio/cache/golden/${MACHINE}/${dst_name}"
+            mc cp "$f" "$DST" && echo "::notice::staged signed base: $DST" || { echo "::warning::mc cp $f -> $DST failed"; ok=0; }
+            if [ -f "$f.p7s" ]; then
+              mc cp "$f.p7s" "${DST}.p7s" && echo "::notice::staged signature: ${DST}.p7s" || { echo "::warning::mc cp $f.p7s -> ${DST}.p7s failed"; ok=0; }
+            fi
+          done
+          for pem in signing-cert.pem ca.pem; do
+            [ -f "$pem" ] || continue
+            mc cp "$pem" "minio/cache/golden/${MACHINE}/${pem}" \
+              || echo "::warning::mc cp $pem to golden/${MACHINE}/ failed (non-fatal — production.yml ships its own copy too)"
+          done
+          # Hard. "production.yml's pull step will error clearly" is true but far too late: the
+          # failure surfaces at RELEASE time, on a build that already reported success hours earlier.
+          # Fail here, where the cause (and the mc error) is still in front of you.
+          [ "$ok" = 1 ] || { echo "::error::one or more signed-base uploads to MinIO golden failed — production.yml pulls the shipping base from there at release time"; exit 1; }
+
+      # Publish the signed shipping base as a GitHub artifact too (for local download / debugging),
+      # mirroring the qemuarm64 golden's own GitHub-artifact publish above.
+      - name: Upload signed shipping base (GitHub artifact)
+        if: matrix.shipping == true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sentient-image-${{ matrix.machine }}
+          path: wic-out/**
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      # Recompute the SAME dated pre-release tag the qemuarm64 golden leg uses (date.run_id) — matrix
+      # legs are separate jobs and can't share step outputs, but the formula is deterministic. (A build
+      # spanning UTC midnight could in theory split into two tags; the actual consumers pull from fixed
+      # MinIO keys, so that would be at most a cosmetic double-release, not a correctness issue.)
+      - name: Compute pre-release tag (shipping)
+        if: matrix.shipping == true
+        id: prerel_tag
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: echo "tag=$(date -u +%Y%m%d).${RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      # Publish the SIGNED shipping .wic (+ .p7s + signer cert/CA) to that SAME pre-release, so the base
+      # image release always carries EVERY machine's assets — not just the qemuarm64 emulation bundle.
+      # softprops upserts by tag: whichever matrix leg reaches its publish first creates the release,
+      # the rest append. Runs sequentially with the golden leg (max-parallel: 1) — no publish race.
+      - name: Publish signed shipping base to pre-release
+        if: matrix.shipping == true
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          tag_name: ${{ steps.prerel_tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          fail_on_unmatched_files: false
+          files: |
+            wic-out/sentient-image-*.wic
+            wic-out/sentient-image-*.wic.bz2
+            wic-out/sentient-image-*.wic.p7s
+            wic-out/sentient-image-*.wic.bz2.p7s
+            wic-out/signing-cert.pem
+            wic-out/ca.pem
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

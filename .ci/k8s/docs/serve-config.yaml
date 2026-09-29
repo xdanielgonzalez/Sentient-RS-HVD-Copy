@@ -1,0 +1,31 @@
+# Tailscale serve config for the docs sidecar (TS_SERVE_CONFIG): terminate HTTPS on :443 with a
+# tailnet cert (${TS_CERT_DOMAIN} is substituted by containerboot at startup) and proxy to the
+# nginx container on 127.0.0.1:80 (same pod). AllowFunnel=false is the load-bearing line — the
+# site is reachable by TAILNET MEMBERS ONLY, never published to the public internet via Funnel.
+# Schema per the official guide: tailscale.com/blog/docker-tailscale-guide.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sentient-docs-serve-config
+  namespace: docs
+data:
+  serve.json: |
+    {
+      "TCP": {
+        "443": {
+          "HTTPS": true
+        }
+      },
+      "Web": {
+        "${TS_CERT_DOMAIN}:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://127.0.0.1:80"
+            }
+          }
+        }
+      },
+      "AllowFunnel": {
+        "${TS_CERT_DOMAIN}:443": false
+      }
+    }

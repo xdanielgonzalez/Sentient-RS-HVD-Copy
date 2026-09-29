@@ -1,0 +1,57 @@
+# `s` — the RP2350 (Cortex-M33) secure-world (S) binary (EPIC #350, story S4 #355).
+#
+# THIS IS A DEMO SCAFFOLD, NOT PRODUCTION: claims limited to signed boot / load-time integrity / IP
+# protection vs non-physical attackers. NO FIPS, NO attestation, NO anti-tamper. RP2350 A4 stepping
+# only.
+#
+# Boots first (it owns reset), configures the SAU (`src/sau.rs`), initializes the session-cipher
+# service behind the frozen `sv_*` veneers (`src/service.rs`, veneers compiled from
+# `../veneers/veneer.c` by `build.rs`), then jumps to the NS image (`src/ns_jump.rs`) via `bxns`. NO
+# executor — this is a bare `cortex-m-rt` binary; the veneers are one-shot synchronous calls, not
+# tasks. See `../README.md` for the full S/NS memory-split table and build order.
+[package]
+name = "rp2350-s"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+description = "RP2350 (Cortex-M33) secure-world (S) binary — demo TrustZone-M scaffold. SAU config + sv_* veneer service + bxns handoff to the NS image. NOT production: no FIPS/attestation/anti-tamper."
+
+[dependencies]
+# The S world is single-threaded (no executor, bare cortex-m-rt binary), so it needs the
+# single-core critical-section impl. This impl is sole/exclusive — no other impl can be active
+# in any linking unit of this crate (linker error if there is). The NS crate (bin/mcu-rp2350/ns)
+# uses embassy-rp's restore-state-u8 impl — the two worlds never link together, so no conflict.
+cortex-m = { workspace = true, features = ["critical-section-single-core"] }
+cortex-m-rt = { workspace = true }
+panic-halt = { workspace = true }
+critical-section = { workspace = true }
+
+# The frozen NS<->S ABI (error/custody codes + const mappings) — see `../abi`.
+rp2350-abi = { workspace = true }
+# The session-cipher seam this service bridges the veneers to. `default-features = false` (no
+# `std`), `features = ["software"]` (the pure-Rust AES-256-GCM `SoftwareSessionStore` — this
+# scaffold's ONLY custody tier; no `trustzone`/`secure-element`/`fips` feature is enabled here, so
+# `sv_profile` honestly reports `SoftwareMemory` for both purposes, matching the demo-scaffold
+# claim — see `../README.md`).
+lib-security = { workspace = true, features = ["software"] }
+
+[build-dependencies]
+# Compiles `../veneers/veneer.c` with `-mcmse` (see `build.rs`).
+cc = { workspace = true }
+
+# `[profile.*]` is inherited from the workspace root manifest (`../Cargo.toml`) — a plain member
+# manifest's own `[profile.*]` tables are ignored by Cargo, same note `ns/Cargo.toml` carries.
+
+# Mutes rust-analyzer's "can't find crate for `test`" on this no_std bin (matches `ns`'s and
+# `hil/pico-seplos-emu`'s convention) — no unit tests live in this crate; the host-testable logic
+# (the ABI mapping fns) lives in `rp2350-abi`, and `lib-security`'s own crate owns the
+# `SoftwareSessionStore` behavioral tests. This crate is thin glue: SAU config, veneer service
+# dispatch, and the `bxns` handoff — none of it is meaningfully host-testable (it's raw
+# register/assembly), which is why it stays this small.
+[[bin]]
+name = "rp2350-s"
+test = false
+bench = false

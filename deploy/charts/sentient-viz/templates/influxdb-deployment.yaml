@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-influxdb
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: influxdb
+spec:
+  replicas: 1
+  # RWO volume — the new pod must wait for the old one to release it.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "influxdb") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "influxdb") | nindent 8 }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/influxdb-secret.yaml") . | sha256sum }}
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: influxdb
+          image: "{{ .Values.images.influxdb.repository }}:{{ .Values.images.influxdb.tag }}"
+          imagePullPolicy: {{ .Values.images.influxdb.pullPolicy }}
+          # Official-image first-boot init contract; idempotent — setup is skipped
+          # when the volume is already initialized.
+          env:
+            - name: DOCKER_INFLUXDB_INIT_MODE
+              value: setup
+            - name: DOCKER_INFLUXDB_INIT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sentient-viz.fullname" . }}-influxdb
+                  key: admin-user
+            - name: DOCKER_INFLUXDB_INIT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sentient-viz.fullname" . }}-influxdb
+                  key: admin-password
+            - name: DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sentient-viz.fullname" . }}-influxdb
+                  key: admin-token
+            - name: DOCKER_INFLUXDB_INIT_ORG
+              value: {{ .Values.influxdb.org | quote }}
+            - name: DOCKER_INFLUXDB_INIT_BUCKET
+              value: {{ .Values.influxdb.bucket | quote }}
+            {{- with .Values.influxdb.retention }}
+            - name: DOCKER_INFLUXDB_INIT_RETENTION
+              value: {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8086
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/influxdb2
+          resources:
+            {{- toYaml .Values.influxdb.resources | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.influxdb.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "sentient-viz.fullname" . }}-influxdb
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

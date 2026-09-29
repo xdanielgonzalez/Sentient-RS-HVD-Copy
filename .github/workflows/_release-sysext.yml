@@ -1,0 +1,208 @@
+name: _release-sysext (reusable)
+
+# Reusable workflow — App sysext (post sysext-split). Called by production.yml.
+#
+# Builds distro/kas/sentient.yml's `sentient-app-sysext` recipe (a squashfs systemd-sysext
+# extension carrying ONLY /usr/bin/bin-rpi + extension-release metadata; the `sentient-agent-bin`
+# package) for each shipping MACHINE, CMS-signs the emitted `.raw`, and PULLS the pre-signed BASE
+# `.wic` from the MinIO golden store that image.yml/_yocto.yml publishes — no base OS rebuild
+# happens here anymore. The caller wires `needs: build` because the sentient-agent-bin BitBake
+# recipe is a PREBUILT-BINARY recipe (per the plan's locked decision — no Rust toolchain runs
+# inside BitBake): it consumes the musl-static aarch64 artifact, staged into the SAME recipe files
+# dir the old `yocto` job used (distro/meta-sentient/recipes-sentient/sentient-agent/files/bin-rpi)
+# — both `sentient-agent-bin` and the sysext-installing recipe read from that one files dir per the
+# frozen interface contract.
+#
+# Lighter than the old full-image job: `sentient-app-sysext` is a small squashfs (one binary +
+# metadata), not a full rootfs, so this should build much faster than the retired `yocto` job even
+# cold — but it still runs in the Yocto builder image/toolchain, hence the same container + generous
+# timeout budget (BitBake startup/parse overhead applies regardless of target size).
+#
+# TODO(verify-at-build): this workflow is authored from the frozen interface contract and has NOT
+# been run — first execution will surface real BitBake/kas issues (missing layer deps,
+# DL_DIR/SSTATE_DIR path mismatches with .ci/yocto.Dockerfile's env). The `sentient-app-sysext`
+# recipe now exists (distro/meta-sentient/recipes-sentient/sentient-app-sysext/
+# sentient-app-sysext.bb) but this job has never actually built it. Treat the first
+# `workflow_dispatch` run as the actual bring-up, not a rubber-stamp.
+
+on:
+  workflow_call:
+    secrets:
+      CACHE_AWS_KEY:
+        required: false
+      CACHE_AWS_SECRET:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  sysext:
+    name: App sysext (${{ matrix.machine }})
+    permissions:
+      contents: read
+    runs-on: arc-runner-set
+    # Pinned by digest — kept in lockstep with _yocto.yml/_uat-qemu.yml via .ci/update-build-sha.sh
+    # (WORKFLOWS array); mutable :latest tags can be served stale through the Harbor pull-through
+    # cache — a content-addressed digest is cache-proof.
+    container: rust-mirror:443/sentient/sentient-yocto-builder@sha256:38693df6f9fef0668e05ab88506c702d2138258e4718a9fd0a6490ab43485298
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - machine: raspberrypi5
+            kas_config: distro/kas/sentient.yml
+          - machine: raspberrypi4-64
+            kas_config: distro/kas/sentient.yml:distro/kas/sentient-rpi4.yml
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      # LEVERAGE THE MINIO SSTATE MIRROR (like _yocto.yml's golden build) instead of an all-or-nothing
+      # runs-on/cache tarball. BitBake READS prebuilt sstate on demand from MinIO's HTTP gateway
+      # (SSTATE_MIRRORS / SOURCE_MIRROR_URL in distro/kas/sentient.yml) — no restore step; the local
+      # SSTATE_DIR starts empty and fills from the mirror. This step WRITES each object BACK to MinIO as
+      # BitBake produces it (`mc mirror --watch`), so the shipping raspberrypi5/raspberrypi4-64 sstate
+      # ACCUMULATES across runs: a first cold build (which was timing out) warms it, and every later
+      # build is I/O-bound restores, not a multi-hour recompile. Stopped + swept in the always() step
+      # after the build. (raspberrypi{4-64,5} are aarch64 like qemuarm64, so much target/native sstate
+      # already in the mirror from the golden builds is reused; only machine-specific bits are cold.)
+      - name: Start MinIO mirror write-through (continuous)
+        uses: ./.github/actions/minio-mirror-start
+        with:
+          mc-endpoint: http://minio-cache-direct.minio-tenant.svc:9000
+          mc-key: ${{ secrets.CACHE_AWS_KEY }}
+          mc-secret: ${{ secrets.CACHE_AWS_SECRET }}
+
+      # PULL the pre-signed BASE from the MinIO golden store that image.yml/_yocto.yml publishes —
+      # see the script header for the full rationale + key-convention TODO.
+      - name: Pull pre-signed base .wic from MinIO golden store (${{ matrix.machine }})
+        env:
+          MACHINE: ${{ matrix.machine }}
+          MC_ENDPOINT: http://minio-cache-direct.minio-tenant.svc:9000
+          MC_KEY: ${{ secrets.CACHE_AWS_KEY }}
+          MC_SECRET: ${{ secrets.CACHE_AWS_SECRET }}
+        run: .ci/scripts/release/pull-signed-base.sh
+
+      - name: Download musl bin-rpi artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bin-rpi-linux-arm64-musl
+          path: artifacts/bin-rpi-musl
+
+      # Stage the fresh musl bin-rpi into the recipe files dir — SAME staging path/mechanism as the
+      # former `yocto` job used for `sentient-agent`. Per the frozen interface contract, BOTH the
+      # `sentient-agent-bin` package and the `sentient-app-sysext` recipe that installs it read from
+      # this one files dir (do_install reading files/bin-rpi) — no separate staging step needed for
+      # the sysext recipe specifically.
+      - name: Stage prebuilt binary for the sentient-agent-bin recipe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p distro/meta-sentient/recipes-sentient/sentient-agent/files
+          cp artifacts/bin-rpi-musl/bin-rpi-linux-arm64-musl \
+             distro/meta-sentient/recipes-sentient/sentient-agent/files/bin-rpi
+          chmod +x distro/meta-sentient/recipes-sentient/sentient-agent/files/bin-rpi
+
+      - name: kas build sentient-app-sysext (${{ matrix.machine }})
+        shell: bash
+        env:
+          # Match _yocto.yml's golden build: the kas manifest's `meta-sentient` layer is
+          # `path: ../distro/meta-sentient`, resolved relative to KAS_WORK_DIR — so the work dir MUST
+          # be <repo>/yocto for that `../distro` to land on <repo>/distro/meta-sentient. Defaulting the
+          # work dir to the repo root (no KAS_WORK_DIR) makes `../distro` overshoot to <repo>/../distro,
+          # and BitBake aborts ("layer directories do not exist: .../build/../../distro/meta-sentient").
+          KAS_WORK_DIR: ${{ github.workspace }}/yocto
+          DL_DIR: /opt/yocto-cache/downloads
+          SSTATE_DIR: /opt/yocto-cache/sstate-cache
+        run: |
+          set -euo pipefail
+          # Memory-capped BitBake parallelism — shared script with _yocto.yml (see there for the
+          # full derivation). This REPLACES the prior CPU-only formula here (a latent OOM risk vs.
+          # _yocto.yml's memory-capped version); rewiring to the shared script fixes that drift.
+          PARCONF="$GITHUB_WORKSPACE/yocto-parallel.yml"
+          "$GITHUB_WORKSPACE/.ci/scripts/yocto-parallel-fragment.sh" "$PARCONF"
+          # Container runs as root for the ARC runner; BitBake refuses root, so build as the non-root
+          # `builder` baked into the image (see .ci/yocto.Dockerfile) via the shared kas harness
+          # (mkdir -p $KAS_WORK_DIR + chown + runuser drop — see the script for the full contract).
+          # The build tree lands under $KAS_WORK_DIR/build, so the Stage step reads
+          # yocto/build/tmp/deploy/...
+          # PROGRESS-ONLY REPORTING: pipe the BitBake build through the shared log filter (throttled
+          # progress heartbeat + all warnings/errors/summaries, minus the per-task NOTE flood). The
+          # `set -o pipefail` above keeps BitBake's real exit code authoritative across the pipe.
+          CHOWN_PATHS="$GITHUB_WORKSPACE /opt/yocto-cache" \
+            "$GITHUB_WORKSPACE/.ci/scripts/run-kas.sh" build "${{ matrix.kas_config }}:$PARCONF" --target sentient-app-sysext \
+            | python3 "$GITHUB_WORKSPACE/.ci/scripts/bitbake-log-filter.py"
+
+      # Stop the continuous watchers + a FINAL reconciling sweep (if: always() — runs on success,
+      # failure, or cancel). The watchers streamed most sstate/downloads during the build; this catches
+      # anything written after their last inotify event and is the backstop if `mc --watch` was absent.
+      # `mc mirror` is incremental + never deletes, so the mirror ACCUMULATES the shipping-machine sstate.
+      - name: Stop write-through + final mirror sweep (always)
+        if: always()
+        uses: ./.github/actions/minio-mirror-stop
+        with:
+          mc-endpoint: http://minio-cache-direct.minio-tenant.svc:9000
+          mc-key: ${{ secrets.CACHE_AWS_KEY }}
+          mc-secret: ${{ secrets.CACHE_AWS_SECRET }}
+
+      # Collect the emitted sysext .raw into dist/ — see the script header for the glob-tolerance
+      # TODO (exact BitBake output name unconfirmed until the first real build).
+      - name: Stage sysext artifact
+        env:
+          MACHINE: ${{ matrix.machine }}
+        run: .ci/scripts/release/stage-sysext-artifact.sh
+
+      # X.509 CMS detached signature of the app sysext `.raw`, against our self-signed CA
+      # (SIGNING_KEY/SIGNING_CRT signer + CA_CRT trust anchor) — EXACT pattern as _yocto.yml's
+      # shipping-base "Sign .wic (X.509 CMS)" step (same CA-verify -> -noverify prerelease -> hard-fail
+      # degrade). Verify with:
+      #   openssl cms -verify -binary -content <app>.raw -in <app>.raw.p7s -inform DER -CAfile ca.pem
+      # IMPORTANT: this is NOT on-device verified boot (no dm-verity/secure-boot root of trust yet —
+      # Phase 3 follow-up); it proves the `.raw` wasn't tampered with between this pipeline and the
+      # device pulling it. The signer cert + CA are attached to the release (signing-cert.pem / ca.pem).
+      - name: Sign app sysext .raw (X.509 CMS)
+        uses: ./.github/actions/cms-sign
+        with:
+          signing-key: ${{ secrets.SIGNING_KEY }}
+          signing-crt: ${{ secrets.SIGNING_CRT }}
+          ca-crt: ${{ secrets.CA_CRT }}
+          working-directory: dist
+          files: sentient-app-*.raw
+
+      - name: Sign checksums with cosign (keyless)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          cosign sign-blob --yes --bundle "sentient-app-${{ matrix.machine }}.sha256.cosign.bundle" \
+            "sentient-app-${{ matrix.machine }}.sha256"
+
+      # Move the pulled base (+ its .p7s / signing-cert.pem / ca.pem) into `dist/` too, so ONE
+      # upload-artifact carries both the app sysext AND the base for this machine — the publish job
+      # downloads all artifacts with merge-multiple and doesn't need to know which job produced what.
+      # Also generate a checksum manifest for the pulled base (the app sysext already has one from the
+      # "Stage sysext artifact" step above) so the publish job's "Aggregate checksums" step picks it
+      # up too.
+      - name: Merge pulled base into dist
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in base-out/*; do
+            [ -f "$f" ] || continue
+            cp "$f" "dist/$(basename "$f")"
+          done
+          ( cd dist && sha256sum sentient-image-${{ matrix.machine }}.wic* > "sentient-image-${{ matrix.machine }}.sha256" 2>/dev/null || true )
+          ls -lh dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sentient-release-${{ matrix.machine }}
+          path: dist/*
+          if-no-files-found: error

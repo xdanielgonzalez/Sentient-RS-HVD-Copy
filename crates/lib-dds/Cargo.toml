@@ -1,0 +1,45 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "lib-dds"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "DDS/RTPS (MIL-STD-3071) transport for the Pi: an owned DdsParticipant/DdsWriter seam over a single dust_dds 0.15.0 backend. Publishes pre-serialized XCDR2 (lib-tms chains, bytes-in) via a custom UDP/IPv6 TransportParticipantFactory, translating the Annex D.5 QoS profiles into dust_dds QoS. Pi-only (std/tokio); NOT no_std — never linked by the MCU."
+
+[features]
+# The crate boundary IS the swappability seam; today exactly one backend ships (dust_dds — the
+# WP0/WP4 bake-off winner). A future backend adds a sibling `backend-<x>` feature + adapter module
+# under the SAME `DdsParticipant`/`DdsWriter` seam; callers never change. Static dispatch (one backend
+# per product binary), never both at once.
+default = ["backend-dustdds"]
+backend-dustdds = ["dep:dust_dds", "lib-net/embassy-udp-host"]
+
+[dependencies]
+# Foundation: TmsTopicId + the generated Annex D.5 QoS catalogue (generated_qos) + Identity + the
+# XCDR2 chain core (cdr) the seam carries pre-serialized. no_std core — no std feature needed here.
+lib-tms = { workspace = true, default-features = false }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+# The single RTPS/QoS/discovery backend (feature-gated).
+dust_dds = { workspace = true, optional = true }
+# The owned UDP/IPv6 transport seam. The custom RTPS TransportParticipantFactory programs against
+# `lib_net::embassy::udp::UdpEndpoint` (embassy-shaped) instead of raw sockets — transport ownership
+# lives in the owned net layer, not this DDS consumer crate. `embassy-udp-host` = the std/socket2
+# host-runner substrate (see lib-net's `embassy::udp` module doc). Enabled by `backend-dustdds`.
+lib-net = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The env-gated loopback integration test renders real XCDR2 Heartbeat bytes with lib_tms::cdr and
+# drives the real dust_dds stack through the bytes-in seam; the seam unit tests inspect the
+# translated dust_dds `DataWriterQos`.
+tokio = { workspace = true }
+dust_dds = { workspace = true }
+# `optional_topics_wire_identity` constructs the `lib_tms` generated topic structs (whose fields are
+# `heapless::String<N>` / `heapless::Vec<T, N>`) to render OUR chain bytes; needs heapless in scope.
+heapless = { workspace = true }
+
+[lints]
+workspace = true

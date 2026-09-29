@@ -1,0 +1,91 @@
+# cargo-nextest config — process-per-test isolation for the integration/e2e lane.
+#
+# The pty (real OS pty, a scarce-ish per-host resource) and embedded-broker (real TCP listener)
+# tests are timing-sensitive and historically the flaky class on shared/loaded CI runners ("CI
+# runners starve" — see docs on the L1 e2e harness). `serial_test::file_serial(seplos_e2e)` already
+# enforces a cross-process file lock as the belt; this test-group is the suspenders when the whole
+# suite runs through `cargo nextest run` — nextest serializes every test assigned to the same named
+# group ACROSS binaries (not just within one), so these never contend for a pty/port at the same
+# time regardless of how nextest schedules the rest of the suite.
+#
+# #99 moved the cross-crate e2e tests (host_pty, mqtt_e2e, broker_roundtrip, broker_auth, e2e_l1)
+# into `test-e2e`; `host_timeout` (lib-io) and `broker_health` (lib-mqtt) are
+# crate-local component tests that stayed put but still share the same pty/port resources, so they
+# remain in this group for correctness under a broader `cargo nextest run --workspace`.
+#
+# Run: `cargo nextest run` (falls back to plain `cargo test` for anything nextest can't run, e.g.
+# doctests — see justfile).
+
+# Hang safety-net: nextest has no default bound on a single test's wall-clock time, so a genuinely
+# stuck test (deadlocked await, a broker that never comes up, etc.) would otherwise hang the whole
+# CI job. `period` is when nextest starts WARNING (a slow-but-progressing test is not itself a
+# failure); `terminate-after` is how many more `period`s it tolerates before SIGTERM-then-kill.
+# 45s / 3 => warn at 45s, terminate at 135s — generous relative to the now-fast (TimingProfile
+# `SENTIENT_TEST_FAST_TIMERS`-compressed) e2e tests in this workspace, which normally complete in a
+# few seconds, but still bounds any true hang instead of leaving it to run out the job's own
+# timeout.
+[profile.default]
+slow-timeout = { period = "45s", terminate-after = 3 }
+
+# JUnit output for CI publishing (_test.yml's e2e job): written to
+# target/nextest/<profile>/junit.xml, parsed into the job's $GITHUB_STEP_SUMMARY and surfaced as a
+# per-test-case Check via dorny/test-reporter — see _test.yml's "Publish test-e2e results" step.
+[profile.default.junit]
+path = "junit.xml"
+
+[[profile.default.overrides]]
+filter = '''
+    binary_id(test-e2e::host_pty)
+    | binary_id(lib-io::host_timeout)
+    | binary_id(test-e2e::mqtt_e2e)
+    | binary_id(test-e2e::broker_roundtrip)
+    | binary_id(lib-mqtt::broker_health)
+    | binary_id(test-e2e::broker_auth)
+    | binary_id(test-e2e::e2e_l1)
+    | binary_id(test-e2e::seplos_at_rate_e2e)
+    | binary_id(test-e2e::greengrass_sinkset_e2e)
+    | binary_id(test-e2e::voltronic_inverter_e2e)
+    | binary_id(test-e2e::capture_e2e)
+    | binary_id(test-e2e::spec_conformance_e2e)
+'''
+test-group = 'seplos-e2e'
+
+[test-groups.seplos-e2e]
+max-threads = 1
+
+# DDS/RTPS interop e2e (#325, WP7): a real dust_dds `DdsParticipant` joins MIL-STD-3071 domain 0 over
+# IPv6 SPDP link-local multicast (`ff02::1234`) — a real, host-wide OS network resource, not a
+# per-process-isolated one like a pty or an ephemeral TCP port. Two DDS-domain-0 participants from
+# DIFFERENT concurrently-running test processes on the same runner would cross-talk (SEDP endpoint
+# matching, sample delivery) regardless of nextest's normal process isolation, so every test that
+# joins domain 0 gets its own `max-threads = 1` group — the same "suspenders on top of
+# `serial_test::file_serial`" rationale `seplos-e2e` documents above, scoped to the DDS-specific
+# resource. `dds_interop_e2e.rs`'s tests ALSO carry `#[file_serial(seplos_e2e)]` (they open a real pty
+# too, exactly like every other test in the `seplos-e2e` group above) — that cross-process file lock
+# and this nextest test-group are independent, additive mechanisms; a test can be a member of one
+# nextest test-group while still holding a `file_serial` key shared with a different group's tests.
+# `lib-dds::dds_loopback` is `SENTIENT_TEST_DDS_LOOPBACK`-gated (usually a no-op) but joins the SAME
+# domain 0 when it IS enabled, so it is listed here too for completeness.
+#
+# Retries: the dds-interop lane exercises interop against dust_dds, a young third-party DDS impl. Its
+# SPDP/SEDP discovery completes reliably (~1s), but the RTPS DATA delivery leg is nondeterministically
+# slow/dropped under CPU contention on the small (2-node) shared ARC pool — the test fails ~30% of
+# runs with "no Heartbeat sample within 30s" even though the same test passes locally and the wire
+# bytes are independently proven by the byte-oracle chain (`lib-mapping/tests/wire_cdr_*.rs`) plus the
+# CycloneDDS decode oracle. `retries = 3` (4 attempts) drives a ~30% independent per-attempt failure
+# down to <1% job-fail. This is de-flaking a nondeterministic EXTERNAL-stack interop test, NOT masking
+# a regression in our code: a real breakage fails all 4 attempts. Each attempt stays bounded by the
+# existing slow-timeout (45s warn / 135s terminate) and the 15-min job timeout. The base rate is also
+# cut by the paired `RUST_LOG` change in `crates/test-e2e/tests/dds_interop_e2e.rs` (bin-rpi's dust_dds
+# logging quieted to `warn` to reduce CPU pressure); the deeper dust_dds DATA-path root-cause remains
+# for a future investigation.
+[[profile.default.overrides]]
+filter = '''
+    binary_id(test-e2e::dds_interop_e2e)
+    | binary_id(lib-dds::dds_loopback)
+'''
+retries = 3
+test-group = 'dds-e2e'
+
+[test-groups.dds-e2e]
+max-threads = 1

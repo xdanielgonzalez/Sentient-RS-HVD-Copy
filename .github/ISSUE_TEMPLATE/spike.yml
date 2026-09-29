@@ -1,0 +1,56 @@
+name: "Spike / investigation"
+description: "A time-boxed research task to answer a specific question and inform a decision (see EPIC #5 Scope E precedent)."
+title: "SPIKE: "
+labels: ["spike"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A spike produces a decision or a documented answer, not shipped code. Per CLAUDE.md's
+        "Bounded Debugging" ethos: prefer getting one definitive datum over open-ended exploration,
+        and per "Don't invent external-tool facts": cite official docs/source, don't rely on recall.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question to answer
+      description: State it as a specific, answerable question — not an open-ended "look into X".
+      placeholder: |
+        e.g. Can Renode move real Ethernet frames for the qemu_cortex_m3 board, or does it only
+        emulate the timer-and-serial substrate? (Needed to decide the MCU networking test strategy.)
+    validations:
+      required: true
+
+  - type: textarea
+    id: why_now
+    attributes:
+      label: Why now
+      description: What decision or work is blocked on this answer?
+    validations:
+      required: true
+
+  - type: input
+    id: timebox
+    attributes:
+      label: Time-box
+      description: How much time is budgeted before reporting back, regardless of whether the question is fully answered?
+      placeholder: "e.g. 4h / 1 day / <=10h consult"
+    validations:
+      required: true
+
+  - type: textarea
+    id: deliverable
+    attributes:
+      label: Deliverable / decision needed
+      description: What artifact ends this spike — a written recommendation, a decision record, a go/no-go call?
+      placeholder: "e.g. Written recommendation + a decision record stating the choice and its revisit trigger."
+    validations:
+      required: true
+
+  - type: textarea
+    id: findings
+    attributes:
+      label: Findings
+      description: Fill in once the spike concludes. Cite sources (official docs/source — see CLAUDE.md "Don't invent external-tool facts").
+    validations:
+      required: false

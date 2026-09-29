@@ -1,0 +1,40 @@
+# pico-seplos-emu-core — pure protocol logic for the Pico Seplos BMS pack emulator.
+#
+# no_std, zero hardware/embassy deps: builds for the host (cargo test with no --target flag) AND
+# for thumbv6m-none-eabi (RP2040, Cortex-M0+). A REAL workspace member (unlike the firmware bin
+# crate `hil/pico-seplos-emu`, which is excluded) — mirrors bin-zephyr-platform's "colocated with
+# the MCU app, but host-buildable so lint/test/CI cover it for free" pattern.
+#
+# Does NOT depend on lib-parse: lib-parse (default-features = false, features = ["seplos"]) fails
+# to build for thumbv6m-none-eabi because its Cargo.toml carries an UNCONDITIONAL `bytes` dep
+# (bytes = { workspace = true }, not feature-gated) whose atomic ref-counting
+# (AtomicUsize::fetch_add/compare_exchange) needs RMW instructions ARMv6-M doesn't have (no
+# LDREX/STREX). `bytes` is verified DEAD in lib-parse/lib-canonical (zero `bytes::` usages,
+# `grep -rn "bytes::" crates/lib-parse/src crates/lib-canonical/src` = no hits) — a one-line
+# upstream fix (feature-gate or drop it) would unblock true reuse, tracked as a follow-up, out of
+# this crate's scope. Until then: `checksum.rs` VENDORS lib_parse::seplos::checksum verbatim
+# (byte-identical, doc-commented as a deliberate copy) instead of depending on lib-parse.
+
+[package]
+publish = false
+name = "pico-seplos-emu-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Pure no_std Seplos BMS responder protocol logic for the Pico pack emulator (hil/pico-seplos-emu) — host-testable, MCU-portable, zero hardware deps."
+
+[dependencies]
+heapless = { workspace = true }
+libm = "0.2"
+
+[dev-dependencies]
+# Host-only: the real decoder the responder's encoded frames must round-trip through
+# (tests/responder_host.rs). NOT a [dependencies] entry — see checksum.rs's header comment for
+# why the lib itself stays lib-parse-free. Safe as a dev-dependency because dev-deps only build
+# for `cargo test` (host target), where lib-parse's dead `bytes` dep is harmless.
+lib-parse = { path = "../../crates/lib-parse", default-features = false, features = ["seplos"] }
+
+[lints]
+workspace = true

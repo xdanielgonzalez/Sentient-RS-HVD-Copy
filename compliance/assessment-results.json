@@ -1,0 +1,678 @@
+{
+  "assessment-results": {
+    "uuid": "94701028-5a2e-47af-bfef-a488229e2f7e",
+    "metadata": {
+      "title": "TMS Conformance Assessment Results \u2014 MIL-STD-3071 Topic Coverage Gate",
+      "last-modified": "2026-07-17T02:35:45Z",
+      "version": "2026-07-17T02:35:45Z",
+      "oscal-version": "1.2.1",
+      "remarks": "MIL-STD-3071 \u00a71.5 (p.1): 'This document does not define test procedures that verify compliance with this standard.' This assessment-results document and its generating methodology (compliance/policy/*.rego run via conftest) are a project-defined conformance framework, not a certified DDS conformance test."
+    },
+    "import-ap": {
+      "href": "oscal/catalog.json",
+      "remarks": "No separate OSCAL assessment-plan document is authored for this gate (out of scope for a JSON-driven CI check) -- this references the catalog being assessed directly. The actual assessment methodology is compliance/policy/*.rego, run via conftest; see that directory for the plan-equivalent."
+    },
+    "results": [
+      {
+        "uuid": "d3eda4d5-e25f-4f1e-b270-d506e095b18a",
+        "title": "TMS conftest gate run \u2014 2026-07-17T02:35:45Z",
+        "description": "Automated assessment of docs/compliance/tms/tms-coverage.json against compliance/oscal/catalog.json's Required/Conditional topic controls, via the conftest/OPA policies in compliance/policy/. This checks type-catalogue coverage (does a shaped Rust type exist for this topic) \u2014 NOT runtime publish-wiring coverage (does bin-rpi actually publish/subscribe it); see compliance/oscal/component-definition.json's bin-rpi component for that separate, currently non-machine-checked axis.",
+        "start": "2026-07-17T02:35:45Z",
+        "end": "2026-07-17T02:35:45Z",
+        "reviewed-controls": {
+          "control-selections": [
+            {
+              "include-controls": [
+                {
+                  "control-id": "tms-topic-active-diagnostic-state"
+                },
+                {
+                  "control-id": "tms-topic-active-microgrid-controller-state"
+                },
+                {
+                  "control-id": "tms-topic-device-info"
+                },
+                {
+                  "control-id": "tms-topic-energy-start-stop-state"
+                },
+                {
+                  "control-id": "tms-topic-heartbeat"
+                },
+                {
+                  "control-id": "tms-topic-power-port-state"
+                },
+                {
+                  "control-id": "tms-topic-reply"
+                },
+                {
+                  "control-id": "tms-topic-storage-update"
+                },
+                {
+                  "control-id": "tms-topic-ac-load-sharing-state"
+                },
+                {
+                  "control-id": "tms-topic-ac-measurement-update"
+                },
+                {
+                  "control-id": "tms-topic-ac-summary-measurement-update"
+                },
+                {
+                  "control-id": "tms-topic-authorization-to-energize-reply"
+                },
+                {
+                  "control-id": "tms-topic-control-parameter-state"
+                },
+                {
+                  "control-id": "tms-topic-dc-load-sharing-state"
+                },
+                {
+                  "control-id": "tms-topic-dc-measurement-update"
+                },
+                {
+                  "control-id": "tms-topic-dc-summary-measurement-update"
+                },
+                {
+                  "control-id": "tms-topic-grounding-circuit-state"
+                },
+                {
+                  "control-id": "tms-topic-identity-nickname-state"
+                },
+                {
+                  "control-id": "tms-topic-operator-intent-state"
+                }
+              ]
+            }
+          ]
+        },
+        "props": [
+          {
+            "name": "gate-verdict",
+            "value": "PASS"
+          },
+          {
+            "name": "controls-satisfied",
+            "value": "19"
+          },
+          {
+            "name": "controls-total",
+            "value": "19"
+          }
+        ],
+        "observations": [
+          {
+            "uuid": "76961397-b301-489d-8a59-06d44d9276b6",
+            "description": "Topic-coverage check for 'ActiveDiagnosticState' (Required): type binding present in tms-coverage.json (tms_type=tms::ActiveDiagnosticState, idl_line=3215).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-active-diagnostic-state"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "65e367ae-5e84-4bfb-91e0-c86ed7e56248",
+            "description": "Topic-coverage check for 'ActiveMicrogridControllerState' (Required): type binding present in tms-coverage.json (tms_type=tms::ActiveMicrogridControllerState, idl_line=4539).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-active-microgrid-controller-state"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "409a07ff-d149-4000-8c8b-622cf1361f83",
+            "description": "Topic-coverage check for 'DeviceInfo' (Required): type binding present in tms-coverage.json (tms_type=tms::DeviceInfo, idl_line=5286).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-device-info"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "22f29840-b1c8-4b40-b1bc-cbfc583bba70",
+            "description": "Topic-coverage check for 'EnergyStartStopState' (Required): type binding present in tms-coverage.json (tms_type=tms::EnergyStartStopState, idl_line=4476).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-energy-start-stop-state"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "3b079d71-cba0-454f-bb94-1cd60b99817a",
+            "description": "Topic-coverage check for 'Heartbeat' (Required): type binding present in tms-coverage.json (tms_type=tms::Heartbeat, idl_line=3672).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-heartbeat"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "4e655da2-5241-4eba-976e-58f4da50c7fb",
+            "description": "Topic-coverage check for 'PowerPortState' (Required): type binding present in tms-coverage.json (tms_type=tms::PowerPortState, idl_line=3567).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-power-port-state"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "f8d8cea2-3995-440b-a047-33ec116c2073",
+            "description": "Topic-coverage check for 'Reply' (Required): type binding present in tms-coverage.json (tms_type=tms::Reply, idl_line=4393).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-reply"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "bbd6ca8a-fe7f-47d3-abd6-b4b43bc9fff1",
+            "description": "Topic-coverage check for 'StorageUpdate' (Required): type binding present in tms-coverage.json (tms_type=tms::StorageUpdate, idl_line=5113).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-storage-update"
+              },
+              {
+                "name": "usage-class",
+                "value": "Required"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "a0cef020-c55f-46e2-bb62-7a2d8b0eb12c",
+            "description": "Topic-coverage check for 'AcLoadSharingState' (Conditional, condition: HAS AC PORTS): type binding present in tms-coverage.json (tms_type=tms::ac::LoadSharingState, idl_line=4853).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-ac-load-sharing-state"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "1f086e36-5bff-4bbe-9602-52e9ed971dbb",
+            "description": "Topic-coverage check for 'AcMeasurementUpdate' (Conditional, condition: HAS AC METERS): type binding present in tms-coverage.json (tms_type=tms::ac::MeasurementUpdate, idl_line=4697).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-ac-measurement-update"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "8bfc5bc6-8e2c-4471-a590-805ce017e84c",
+            "description": "Topic-coverage check for 'AcSummaryMeasurementUpdate' (Conditional, condition: HAS AC SUMMARY METERS): type binding present in tms-coverage.json (tms_type=tms::ac::MeasurementUpdate, idl_line=4697).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-ac-summary-measurement-update"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "aeed006a-864c-4802-9446-610e8a2a832d",
+            "description": "Topic-coverage check for 'AuthorizationToEnergizeReply' (Conditional, condition: SUPPORTS REQUEST): type binding present in tms-coverage.json (tms_type=tms::AuthorizationToEnergizeReply, idl_line=3356).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-authorization-to-energize-reply"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "bec1d5f8-6284-4ab7-86a7-4515810a82ea",
+            "description": "Topic-coverage check for 'ControlParameterState' (Conditional, condition: HAS CONTROL PARAMETERS): type binding present in tms-coverage.json (tms_type=tms::ControlParameterState, idl_line=3539).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-control-parameter-state"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "49da75ca-e0cb-407c-a5f2-3207a794f7e2",
+            "description": "Topic-coverage check for 'DcLoadSharingState' (Conditional, condition: HAS DC PORTS): type binding present in tms-coverage.json (tms_type=tms::dc::LoadSharingState, idl_line=5084).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-dc-load-sharing-state"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "4b8ac4b4-630e-4e4b-a47d-582d6bc89147",
+            "description": "Topic-coverage check for 'DcMeasurementUpdate' (Conditional, condition: HAS DC METERS): type binding present in tms-coverage.json (tms_type=tms::dc::MeasurementUpdate, idl_line=4963).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-dc-measurement-update"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "e0a83644-7bf2-49a2-b666-4a046f07d42b",
+            "description": "Topic-coverage check for 'DcSummaryMeasurementUpdate' (Conditional, condition: HAS DC SUMMARY METERS): type binding present in tms-coverage.json (tms_type=tms::dc::MeasurementUpdate, idl_line=4963).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-dc-summary-measurement-update"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "651b6c2b-d61f-424b-a61b-e24548d281ae",
+            "description": "Topic-coverage check for 'GroundingCircuitState' (Conditional, condition: HAS DEVICE GROUND PORTS): type binding present in tms-coverage.json (tms_type=tms::GroundingCircuitState, idl_line=2914).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-grounding-circuit-state"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "25c71d6d-febc-4bc2-92ed-c29089ffdfdc",
+            "description": "Topic-coverage check for 'IdentityNicknameState' (Conditional, condition: SUPPORTS REQUEST): type binding present in tms-coverage.json (tms_type=tms::IdentityNicknameState, idl_line=3605).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-identity-nickname-state"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "6bf9d5ac-0f9f-4d9b-b35f-4b327a74600a",
+            "description": "Topic-coverage check for 'OperatorIntentState' (Conditional, condition: SUPPORTS REQUEST): type binding present in tms-coverage.json (tms_type=tms::OperatorIntentState, idl_line=3927).",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "control-id",
+                "value": "tms-topic-operator-intent-state"
+              },
+              {
+                "name": "usage-class",
+                "value": "Conditional"
+              },
+              {
+                "name": "result",
+                "value": "satisfied"
+              }
+            ]
+          },
+          {
+            "uuid": "80ba9391-9788-412f-aa5e-50b68dfc0c98",
+            "description": "conftest was NOT run by this generator invocation: conftest binary 'conftest' not found on PATH. Install the pinned release binary (see .github/workflows/compliance.yml) or pass --conftest-json.",
+            "methods": [
+              "TEST"
+            ],
+            "collected": "2026-07-17T02:35:45Z",
+            "subjects": [
+              {
+                "subject-uuid": "701422b7-75da-495b-a6cd-bba9d1af86cf",
+                "type": "component",
+                "title": "docs/compliance/tms/tms-coverage.json (generated type-catalogue)"
+              }
+            ],
+            "props": [
+              {
+                "name": "check",
+                "value": "conftest-skipped"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

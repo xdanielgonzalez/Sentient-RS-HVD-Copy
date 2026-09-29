@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-sim
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sim
+spec:
+  replicas: 1
+  # Single accept slot: two pods would split socat connections between distinct sims.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "sim") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "sim") | nindent 8 }}
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: sim
+          image: "{{ .Values.images.sim.repository }}:{{ .Values.images.sim.tag }}"
+          imagePullPolicy: {{ .Values.images.sim.pullPolicy }}
+          # NO probes, deliberately: seplos-tcp-sim serves ONE connection and exits on
+          # disconnect — a kubelet tcpSocket probe would consume the accept slot and
+          # kill the listener out from under the app's socat. The entrypoint's
+          # re-listen loop is the supervisor.
+          env:
+            - name: SIM_PORT
+              value: {{ .Values.sim.port | quote }}
+            - name: SIM_PACE
+              value: {{ .Values.sim.pace | quote }}
+            {{- with .Values.sim.turnaroundMs }}
+            - name: SIM_TURNAROUND_MS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.sim.drift }}
+            - name: SIM_DRIFT
+              value: {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: seplos
+              containerPort: {{ .Values.sim.port }}
+          volumeMounts:
+            - name: ctl
+              mountPath: /ctl
+          resources:
+            {{- toYaml .Values.sim.resources | nindent 12 }}
+      volumes:
+        - name: ctl
+          emptyDir: {}

@@ -1,0 +1,22 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "spec-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "The app contract (ADR 0009): the Platform port + RunConfig/Health vocabulary + the preflight-check subsystem. Unconditionally no_std — the stable, abstract spine impl-app (policy) and every platform adapter depend down onto, so neither depends on the other."
+
+[dependencies]
+# Feature-independent: `lib_parse::canonical` (the only module this crate names) is not gated
+# behind any lib-parse feature, so no per-vendor parser feature (`seplos`/`voltronic`) is needed
+# here — this contract crate names only the vendor-neutral canonical model.
+lib-parse = { workspace = true, default-features = false }
+lib-mapping = { workspace = true, default-features = false }
+lib-io = { workspace = true, default-features = false }
+heapless = { workspace = true }
+log = { workspace = true }
+
+[lints]
+workspace = true

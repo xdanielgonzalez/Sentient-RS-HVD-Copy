@@ -1,0 +1,55 @@
+name: "Chore / maintenance"
+description: "Dependency bump, refactor, tech debt, or CI/tooling maintenance — no user-facing behavior change."
+title: "CHORE: "
+labels: ["chore"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Note: the `chore` label may not exist in this repo yet — a maintainer will need to create it
+        before this template's default label applies cleanly (see the PR/issue template rollout notes).
+
+  - type: dropdown
+    id: chore_type
+    attributes:
+      label: Type
+      options:
+        - "Dependency bump / supply-chain (cargo-deny, cargo-vet, SBOM)"
+        - "Refactor (no behavior change)"
+        - "Type/impl file-split (CLAUDE.md \"Code Organization\" smell-test gate)"
+        - "CI / build pipeline / tooling"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What needs to change?
+      placeholder: |
+        e.g. crates/impl-app/src/zephyr.rs mixes types + impls for the UART transport, spin-arena,
+        publishers, monitor logger, broker pump, and platform factory in one file — split into
+        zephyr/{mod.rs, types/{...}, impl_*.rs} per the type/impl separation convention.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why now? What's the cost of not doing it?
+    validations:
+      required: false
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: How will you confirm this is behavior-preserving?
+      placeholder: |
+        - `rtk cargo build`, `rtk cargo test`, `rtk cargo clippy` stay green
+        - `just smell` clean (or `just smell-baseline` run to shrink the ratchet)
+        - For no_std crates: the thumbv7em-none-eabihf target still links
+    validations:
+      required: true

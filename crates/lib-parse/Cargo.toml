@@ -1,0 +1,30 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "lib-parse"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Feature-bound BMS + inverter vendor parsers: raw bytes -> vendor-neutral canonical reading. Seplos (BMS) behind feature `seplos`, Voltronic/MPP-Solar PI30 (inverter) behind feature `voltronic`. TMS-agnostic, no_std-friendly, zero I/O."
+
+[dependencies]
+bytes = { workspace = true }
+heapless = { workspace = true }
+lib-canonical = { workspace = true }
+
+[features]
+default = ["std", "seplos", "voltronic"]
+std = []
+# Per-vendor BMS protocol parsers. Add a feature + module per new vendor; the canonical model
+# and the downstream mapper never change.
+seplos = []
+# Per-vendor inverter protocol parsers (sibling of the BMS vendors above, different device
+# class/trait). Voltronic/MPP-Solar PI30: RS-232 ASCII, CRC-16/XMODEM-framed.
+voltronic = []
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

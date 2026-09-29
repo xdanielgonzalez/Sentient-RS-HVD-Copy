@@ -1,0 +1,210 @@
+name: docs
+
+# Documentation-site gate + artifact builder: `just docs-check` builds the full mdbook site
+# (docs/ + book.toml), grafts the workspace rustdoc under book/api/, and runs the workspace
+# doctest suite — then uploads the rendered site as the `docs-site` artifact. On push to main the
+# `publish` job additionally bakes the site into the nginx docs image (.ci/docs.Dockerfile),
+# pushes it to Harbor, and rollout-restarts the `sentient-docs` deployment on the k3s cluster —
+# the site is served tailnet-only at https://sentient-docs.<tailnet>.ts.net (Tailscale sidecar,
+# AllowFunnel=false; one-time bring-up runbook: .ci/k8s/docs/README.md). GitHub Pages is not an
+# option here: on a non-Enterprise private repo a Pages site would be public.
+#
+# Path-filtered: docs sources + book.toml drive the mdbook side; crates/** + Cargo.* drive the
+# rustdoc/doctest side; justfile owns the recipes; and the workflow itself.
+#
+# The mdbook toolchain (mdbook + mdbook-mermaid) is installed per-run via cargo-binstall —
+# PREBUILT release binaries, never a source compile (house convention; see .ci/Dockerfile's
+# stage-1 comment for the same pattern). Follow-up (not this branch): bake the mdbook binaries
+# into sentient-builder and drop the install step. mdbook-linkcheck is deliberately NOT
+# installed: book.toml omits [output.linkcheck] because mdbook-linkcheck 0.7.7 cannot parse the
+# mdbook 0.5.x RenderContext (see book.toml's NOTE) — with the html backend alone, the site
+# root is book/ (NOT book/html/).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "book.toml"
+      - "README.md"   # introduction.md includes its dataflow anchor
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "justfile"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "book.toml"
+      - "README.md"   # introduction.md includes its dataflow anchor
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "justfile"
+      - ".github/workflows/docs.yml"
+
+# Cancel a superseded run on the same ref (a new push to the same PR) — the crates/** filter
+# means most PRs that touch Rust code also trigger this lane, so stale runs are common.
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  docs:
+    name: docs site (mdbook + rustdoc + doctests)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+          persist-credentials: false  # docs build only reads the tree; don't persist the token (zizmor artipacked)
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # cargo-binstall itself is NOT in the final sentient-builder image (only the /opt/tools/bin
+      # binaries survive the multi-stage build), so bootstrap it via the official installer —
+      # which installs the prebuilt cargo-binstall release, no compile — then pull the pinned
+      # mdbook toolchain as prebuilt release binaries. Mirrors .ci/Dockerfile stage 1 verbatim.
+      - name: Install mdbook toolchain (cargo-binstall, pinned prebuilt binaries)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --proto '=https' --tlsv1.2 -sSf \
+            https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
+            | bash
+          cargo binstall --no-confirm --locked \
+            mdbook@0.5.4 \
+            mdbook-mermaid@0.17.0
+          mdbook --version
+          mdbook-mermaid --version
+
+      # THE GATE: full site build (rustdoc two-pass -> mdbook build -> graft target/doc into
+      # book/api/) + `cargo test --doc --workspace` — every doc example compiles and runs.
+      - name: just docs-check
+        run: just docs-check
+
+      # The rendered site, rooted at book/ (index.html at the top; rustdoc under api/). Download,
+      # unzip, open index.html — the whole site is self-contained static HTML. The publish job
+      # below bakes this same artifact into the docs image.
+      - name: Upload docs site
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs-site
+          path: book
+          retention-days: 30
+          if-no-files-found: error
+
+  # Push-to-main only: bake the freshly gated site into the nginx docs image
+  # (.ci/docs.Dockerfile), push rust-mirror:443/sentient/sentient-docs:{latest,<sha>}, then
+  # rollout-restart the deployment so the tailnet site serves this merge. The buildx/Harbor
+  # dance (creds-on-disk instead of `docker login`, ca=/SSL_CERT_DIR trust, network.host MTU
+  # workaround) is copied from builder-image.yml — see the AUTH note there for why. The rollout
+  # credential is the DOCS_KUBECONFIG secret: a docs-namespace ServiceAccount that can ONLY
+  # rollout-restart this one deployment (.ci/k8s/docs/rbac.yaml, minted by
+  # .ci/k8s/docs/setup-deployer-kubeconfig.sh).
+  publish:
+    name: publish docs image + roll out
+    needs: docs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # arc-dind, NOT arc-runner-set: this job runs bare (buildx needs the dind daemon + docker
+    # CLI), and the kubernetes-mode arc-runner-set forbids jobs without a `container:`.
+    runs-on: arc-dind
+    timeout-minutes: 20
+    env:
+      REGISTRY: rust-mirror:443
+      NAMESPACE: sentient
+      KUBECTL_VERSION: v1.33.0
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # The site the gate job just built and uploaded — restored to book/ so the Dockerfile's
+      # `COPY book/` sees exactly the artifact users download.
+      - name: Fetch rendered site
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: docs-site
+          path: book
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          # Self-contained Harbor trust for the isolated buildkit builder + network.host for RUN
+          # steps over the 1450-MTU pod overlay — see builder-image.yml for the full story.
+          buildkitd-flags: --allow-insecure-entitlement network.host
+          driver-opts: |
+            env.SSL_CERT_DIR=/etc/ssl/certs:/etc/buildkit/certs/rust-mirror:443
+          buildkitd-config-inline: |
+            [registry."rust-mirror:443"]
+              ca = ["${{ github.workspace }}/.ci/harbor-ca.crt"]
+
+      - name: Write Harbor robot creds to docker config
+        env:
+          HARBOR_ROBOT_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_ROBOT_TOKEN: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+        run: |
+          # No `docker login`: the dind daemon doesn't trust the Harbor private CA, so a login
+          # handshake x509-fails. buildx pushes via buildkit (which TLS-trusts Harbor through the
+          # ca=/SSL_CERT_DIR config) and only needs the creds on disk. Never echo the secret.
+          mkdir -p "$HOME/.docker"
+          auth=$(printf '%s:%s' "$HARBOR_ROBOT_USER" "$HARBOR_ROBOT_TOKEN" | base64 -w0)
+          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "${{ env.REGISTRY }}" "$auth" > "$HOME/.docker/config.json"
+
+      - name: Build + push sentient-docs
+        id: build
+        env:
+          # Client-side Harbor CA trust for buildctl's token fetch (see builder-image.yml).
+          SSL_CERT_DIR: /etc/ssl/certs:${{ github.workspace }}/.ci
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: .ci/docs.Dockerfile
+          push: true
+          network: host
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/sentient-docs:latest
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/sentient-docs:${{ github.sha }}
+
+      - name: Roll out on k3s
+        env:
+          DOCS_KUBECONFIG: ${{ secrets.DOCS_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          # Until the one-time cluster bring-up (.ci/k8s/docs/README.md) mints DOCS_KUBECONFIG,
+          # publish the image but skip the rollout — a red main run for a known-absent secret
+          # would be a false alarm. Once the secret exists this branch never triggers again.
+          if [ -z "$DOCS_KUBECONFIG" ]; then
+            echo "::notice::DOCS_KUBECONFIG not set — image pushed, rollout skipped (bring-up: .ci/k8s/docs/README.md)"
+            exit 0
+          fi
+          # Pinned kubectl, sha256-verified from the same origin. Installed into RUNNER_TEMP and
+          # invoked from there — the dind runner executes as the non-root `runner` user, so
+          # /usr/local/bin is not writable (learned from the first live rollout run).
+          KUBECTL="$RUNNER_TEMP/kubectl"
+          curl -fsSLo "$RUNNER_TEMP/kubectl.dl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSLo "$RUNNER_TEMP/kubectl.sha256" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          echo "$(cat "$RUNNER_TEMP/kubectl.sha256")  $RUNNER_TEMP/kubectl.dl" | sha256sum --check --quiet
+          install -m 755 "$RUNNER_TEMP/kubectl.dl" "$KUBECTL"
+          # Kubeconfig only ever touches a 0600 file; the namespace/context come from the file.
+          install -m 600 /dev/null "$RUNNER_TEMP/kubeconfig"
+          printf '%s' "$DOCS_KUBECONFIG" > "$RUNNER_TEMP/kubeconfig"
+          export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+          "$KUBECTL" rollout restart deployment/sentient-docs
+          "$KUBECTL" rollout status deployment/sentient-docs --timeout=180s
+
+      - name: Summary
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          GIT_SHA: ${{ github.sha }}
+        run: echo "## sentient-docs \`$DIGEST\` ($GIT_SHA) — rolled out to the tailnet docs site" >> "$GITHUB_STEP_SUMMARY"

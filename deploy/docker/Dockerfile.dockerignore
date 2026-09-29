@@ -1,0 +1,21 @@
+# BuildKit per-Dockerfile ignore — applies ONLY to builds with -f deploy/docker/Dockerfile.
+# A root .dockerignore would break `just docs-image` (.ci/docs.Dockerfile COPYs book/ from
+# the repo-root context). Ignore-by-name (not *-then-allowlist) so COPY crates/ never
+# silently misses a file.
+.git/
+.ci/
+.claude/
+.github/
+book/
+compliance/
+distro/
+docs/
+supply-chain/
+target/
+tools/
+deploy/charts/
+# west-workspace artifacts at the repo root (untracked, multi-GB when present)
+zephyr/
+modules/
+.west/
+.scratch/

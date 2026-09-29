@@ -1,0 +1,97 @@
+[package]
+publish = false            # proprietary — never publish to a public registry
+name = "lib-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Serial transport (RS-232 + RS-485) behind one async trait, generic (no dyn) over the reader; host (tokio-serial) + an embassy-version-free embassy UART (feature `embassy`, injected delay) feature-gated. RS-485 direction control: software RTS, kernel TIOCSRS485, or GPIO DE/RE (gpiocdev)."
+
+[dependencies]
+lib-parse = { workspace = true, default-features = false }
+heapless = { workspace = true }
+
+# --- host (RPi Linux, the paid target) ---
+tokio = { workspace = true, optional = true }
+tokio-serial = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+# RS-485 GPIO DE/RE direction control (`host::gpio_de`, `DirectionMode::GpioDe`) — the Linux GPIO
+# character-device uAPI (`/dev/gpiochipN`). Host/Linux-only, like tokio-serial above.
+gpiocdev = { workspace = true, optional = true }
+# `persist` module (folded from the former `lib-persist` crate, #285): the jsonl envelope/capture
+# record types are `#[derive(serde::Serialize)]`; `raw_value` is additive to the workspace's
+# `["alloc"]` default (see other std-only crates, e.g. lib-locate/lib-mqtt, doing the same with
+# `["std"]`) — needed so `Envelope::payload` can embed the already-rendered TMS JSON byte-for-byte
+# via `RawValue` instead of re-escaping it as a string.
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true, features = ["raw_value"] }
+
+# --- embassy MCU platform (forward path; built via the board crate's own toolchain, not this
+# crate's host cargo build) ---
+# Deliberately EMBASSY-VERSION-FREE (story #352): the workspace pins two different embassy
+# generations across the graph (main workspace `embassy-time` 0.4 for `lib-net`'s embassy-net
+# spike; the excluded `bin/mcu-rp2350` workspace pins `embassy-rp` 0.10 / `embassy-time` 0.5), and
+# `embassy-time-driver`'s `links = "embassy-time"` key allows only ONE version per graph. This
+# crate is a dependency of both, so it names no `embassy-*` crate at all — `embassy_uart`'s RS-485
+# guard delays take an injected `T: embedded_hal_async::delay::DelayNs` instead of
+# `embassy_time::Timer`; the board crate supplies its own concrete delay type (whichever
+# embassy-time generation it pins). Per-chip HAL features (formerly `stm32`/`nrf`/`rp2040`,
+# never built by any target) were removed for the same reason — see git history if they're ever
+# needed again.
+embedded-io-async = { workspace = true, optional = true }
+embedded-hal = { workspace = true, optional = true }
+embedded-hal-async = { version = "1", default-features = false, optional = true }
+
+# --- INA3221 triple-channel I2C power monitor (adapter self-telemetry: the W5500/Heltec rails —
+# diagnostics/UI only, NOT the project's power source; forward path, same "board crate supplies
+# the concrete HAL" shape as the embassy UART above) ---
+# `lib-canonical` (NOT `lib-mapping`, NOT `spec-app`) for `DeviceRailReading`/`DeviceRail`: it is
+# the zero-dependency leaf canonical-model crate, so depending on it here cannot cycle. Naming
+# `spec-app` instead — where the `RailMonitor` trait this driver's `read_all` shape mirrors is
+# actually defined — would: `spec-app` already depends on `lib-io` (its `Platform` port names
+# `lib_io::transport::SerialTransport`), so `lib-io -> spec-app` would close a cycle. The actual
+# `impl spec_app::RailMonitor for Ina3221RailMonitor<..>` (a local newtype wrapper — see that
+# type's own doc comment for why `Ina3221` itself can't implement it there either) therefore lives
+# downstream, in the board crate that already depends on both (mirrors how `spec_app::Platform` is
+# implemented in the adapter crates, never in `lib-io` itself). See `ina3221/mod.rs`'s doc comment.
+lib-canonical = { workspace = true, optional = true }
+
+[dev-dependencies]
+# pty pair for exercising the REAL tokio-serial transport against a synthetic responder
+# (dev-only; never touches the no_std target build). `host_pty.rs` (the other real-pty test, which
+# also needed `lib-parse`'s `seplos` feature) moved to `test-e2e` in #99 — `host_timeout.rs`
+# is the only real-pty test left here, and it needs no vendor parser.
+nix = { workspace = true, features = ["term", "fs"] }
+tokio = { workspace = true }
+# Cross-binary/cross-invocation mutual exclusion for real-pty tests (a file lock): the same
+# `seplos_e2e` key is used by test-e2e's pty/broker e2e tests, so ALL real-pty-using tests in
+# the workspace — regardless of crate/binary — serialize against each other.
+serial_test = { workspace = true, features = ["file_locks"] }
+
+[features]
+default = ["host"]
+
+# Host serial over tokio-serial; the deliverable RPi Linux path. `dep:gpiocdev` is here (not a
+# separate feature) because `DirectionMode::GpioDe`/`host::gpio_de` is part of the one `host`
+# surface, same as `dep:tokio-serial` — there's no scenario where `host` is wanted without it.
+host = ["dep:tokio", "dep:tokio-serial", "dep:log", "dep:gpiocdev", "dep:serde", "dep:serde_json", "lib-parse/std"]
+
+# Scripted in-memory SerialTransport for deterministic fault-injection tests (no_std, heapless).
+mock = []
+
+# Chip-agnostic embassy UART impl over embedded-io-async + embedded-hal(-async) traits
+# (host-checkable, no embassy-* dep — see the Cargo.toml comment above). The concrete HAL
+# UART/GPIO/delay types are selected and supplied by the downstream board/binary crate (e.g.
+# `bin/mcu-rp2350`), not here.
+embassy = ["dep:embedded-io-async", "dep:embedded-hal", "dep:embedded-hal-async"]
+
+# Async INA3221 driver (adapter self-telemetry: W5500/Heltec rail draw), generic over
+# `embedded_hal_async::i2c::I2c` ONLY — independent of `embassy` above (no digital/UART traits
+# needed), so a consumer that wants only the rail-monitor leg doesn't pull
+# `embedded-hal`/`embedded-io-async`. `no_std`, host-clippy-able (mirrors `embassy`'s
+# embassy-version-free construction — see this crate's module docs).
+ina3221 = ["dep:embedded-hal-async", "dep:lib-canonical"]
+
+[lints]
+workspace = true

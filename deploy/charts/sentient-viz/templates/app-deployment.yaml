@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sentient-viz.fullname" . }}-app
+  labels:
+    {{- include "sentient-viz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
+spec:
+  replicas: 1
+  # One sim connection, one broker identity — never run two apps side by side.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "app") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentient-viz.selectorLabels" (dict "root" . "component" "app") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/app-configmap.yaml") . | sha256sum }}
+    spec:
+      # CRITICAL: k8s service links inject SENTIENT_VIZ_*_PORT env vars, which
+      # bin-rpi ingests as SENTIENT_-prefixed config keys -> deny_unknown_fields fatal.
+      enableServiceLinks: false
+      containers:
+        - name: app
+          image: "{{ .Values.images.app.repository }}:{{ .Values.images.app.tag }}"
+          imagePullPolicy: {{ .Values.images.app.pullPolicy }}
+          env:
+            - name: SENTIENT_CONFIG
+              value: /etc/sentient/sentient.toml
+            - name: SIM_HOST
+              value: {{ include "sentient-viz.fullname" . }}-sim
+            - name: SIM_PORT
+              value: {{ .Values.sim.port | quote }}
+            - name: PTY_LINK
+              value: {{ .Values.app.ptyLink | quote }}
+            - name: RUST_LOG
+              value: {{ .Values.app.logLevel | quote }}
+          ports:
+            - name: mqtt
+              containerPort: {{ .Values.app.brokerPort }}
+          # rumqttd tolerates probe connects (unlike the sim's single accept slot).
+          readinessProbe:
+            tcpSocket:
+              port: mqtt
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: mqtt
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/sentient
+              readOnly: true
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "sentient-viz.fullname" . }}-app

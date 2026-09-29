@@ -1,0 +1,253 @@
+name: _uat-qemu (reusable)
+
+# Reusable workflow — the qemuarm64 sysext UAT lane. Called by uat.yml on every merge to main.
+#
+# It does NOT rebuild the base Yocto image: it DOWNLOADS the latest GOLDEN prebuilt BASE image
+# (published as a dated pre-release by image.yml, app-free since the sysext split) and MERGES IN the
+# freshly-built app as a systemd-sysext extension image, then boots the result under runqemu and
+# validates. On a normal code merge only the app (bin-rpi) changed, so rebuilding the whole base
+# image would be pure waste — the base is rebuilt only by image.yml when distro/** changes.
+#
+# ARCHITECTURE (post sysext split): `sentient-image` (the base) no longer contains bin-rpi at all — it
+# ships systemd with sysext enabled and `systemd-sysext.service` enabled, so at boot it auto-merges any
+# extension found in /var/lib/extensions/ into /usr BEFORE basic.target. The app itself is a SEPARATE
+# recipe, `sentient-app-sysext`, producing a squashfs `.raw` containing only /usr/bin/bin-rpi +
+# /usr/lib/extension-release.d/extension-release.*. This UAT lane builds that sysext fresh from the
+# just-merged commit and writes it into the golden base's /var/lib/extensions/ (a writable data-area
+# path) — it no longer mutates /usr on the base rootfs. This exercises the REAL production deploy
+# mechanism (drop a signed .raw into /var/lib/extensions/, systemd-sysext merges it at boot) instead of
+# a debugfs rootfs-injection hack that only ever approximated it.
+#
+# qemuarm64 ONLY: the sentient-agent-bin package (and the sentient-app-sysext image that carries it) is
+# COMPATIBLE_HOST = aarch64.*-linux (the Pi is aarch64), so only the qemuarm64 base image is a
+# meaningful UAT target. qemux86-64 has no agent to exercise, so it is not a UAT target. No Renode here
+# either — the MCU firmware boot-smoke is a different product and lives in the MCU/Zephyr lane
+# (production.yml), not the Pi UAT.
+#
+# Ladder: build aarch64-musl bin-rpi -> stage it into the sentient-agent-bin recipe files dir -> kas
+# build sentient-app-sysext (qemuarm64) -> download golden BASE pre-release -> reconstruct deploy dir +
+# write the sysext .raw into /var/lib/extensions/sentient-app.raw (offline, via debugfs — still no
+# mount/loop) -> boot + preflight (systemd-sysext shows the extension merged AND sentient-agent.service
+# active; journalctl on failure) -> full Seplos->TMS->MQTT Robot e2e (auto-skips with a notice until the
+# #156 suites land).
+#
+# The step bodies live in .ci/scripts/uat/*.sh (one script per step, comments preserved there) —
+# this file owns only the job/step topology and the env each script contracts on.
+
+on:
+  workflow_call:
+    secrets:
+      CACHE_AWS_KEY:
+        required: false
+      CACHE_AWS_SECRET:
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Build the ONE thing that changed this merge: the static-musl aarch64 bin-rpi. This is the exact
+  # artifact the sentient-agent-bin package stages into the sentient-app-sysext image (the `uat` job
+  # below does the staging + kas build), so it's a faithful drop-in for the shipped app extension.
+  build-binary:
+    name: build bin-rpi (aarch64 musl)
+    runs-on: arc-runner-set
+    container: rust-mirror:443/sentient/sentient-builder@sha256:e30a010df3c8a398a50ff3d61e374bdbea05a12819fb39fa86e2d54b9b038e12
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Build (musl static)
+        run: just build-musl aarch64-unknown-linux-musl
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          ELF="target/aarch64-unknown-linux-musl/profiling/bin-rpi"
+          test -f "$ELF" || { echo "::error::missing build output: $ELF"; exit 1; }
+          mkdir -p out
+          cp "$ELF" out/bin-rpi
+          aarch64-linux-gnu-strip out/bin-rpi || strip out/bin-rpi || true
+          file out/bin-rpi || true
+
+      - name: Upload bin-rpi
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: uat-bin-rpi
+          path: out/bin-rpi
+          if-no-files-found: error
+
+  # Build the app as a fresh sysext, pull the golden BASE pre-release image, merge the sysext in at
+  # the /var/lib/extensions/ data path, boot it, and validate the extension merges + the agent starts.
+  uat:
+    name: uat (qemuarm64)
+    needs: build-binary
+    runs-on: arc-runner-set
+    # sentient-yocto-builder bakes kas/bitbake/runqemu + qemu-system, debugfs (e2fsprogs), python3,
+    # curl, and (inherited from sentient-builder) cargo for the Seplos sim. Same image + digest pin as
+    # _yocto.yml; kept in lockstep via .ci/update-build-sha.sh (WORKFLOWS array).
+    container: rust-mirror:443/sentient/sentient-yocto-builder@sha256:38693df6f9fef0668e05ab88506c702d2138258e4718a9fd0a6490ab43485298
+    # 60 was a doom loop whenever the sstate mirror was cold or unmatched: the sysext `kas build` fell
+    # back to compiling the native toolchain from source, hit 60m dead-on, and the whole UAT run showed
+    # `cancelled` — so `promote` never fired and no release could be cut (every run 2026-07-29..30).
+    # This lane is a pure sstate CONSUMER (it never `mc mirror`s anything back), so it cannot warm the
+    # cache itself; only image.yml/_yocto.yml can. The headroom is a safety margin for a cold/partial
+    # mirror, NOT the fix — the fix is a reachable mirror plus deterministic taskhashes
+    # (`BB_SIGNATURE_HANDLER = "OEBasicHash"`, distro/kas/sentient.yml). With a warm mirror this job
+    # finishes in minutes and never approaches this ceiling.
+    timeout-minutes: 150
+    env:
+      MACHINE: qemuarm64
+      KAS_WORK_DIR: ${{ github.workspace }}/yocto
+      MC_ENDPOINT: http://minio-cache-direct.minio-tenant.svc:9000
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: Download freshly-built bin-rpi
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: uat-bin-rpi
+          path: newbin
+
+      # Stage the freshly-built binary where the sentient-agent-bin recipe expects it, then build
+      # ONLY the app sysext image for qemuarm64 (NOT the base). Full story in the script.
+      - name: Stage bin-rpi + kas build sentient-app-sysext (qemuarm64)
+        run: .ci/scripts/uat/build-app-sysext.sh
+
+      - name: Locate the built sysext .raw
+        run: .ci/scripts/uat/locate-sysext.sh
+
+      # Pull the GOLDEN BASE image from MinIO IN-CLUSTER (fast) — image.yml (_yocto.yml) stages the
+      # same bundle to a fixed MinIO key on every golden build.
+      - name: Download golden base image from MinIO (qemuarm64)
+        env:
+          MC_KEY: ${{ secrets.CACHE_AWS_KEY }}
+          MC_SECRET: ${{ secrets.CACHE_AWS_SECRET }}
+        run: .ci/scripts/uat/pull-golden-base.sh
+
+      # VERIFY the golden base's X.509 CMS signature BEFORE booting — exercises the exact
+      # sign -> stage -> pull -> verify chain the shipping Pi .wic relies on.
+      - name: Verify golden base signature (X.509 CMS)
+        env:
+          MC_KEY: ${{ secrets.CACHE_AWS_KEY }}
+          MC_SECRET: ${{ secrets.CACHE_AWS_SECRET }}
+        run: .ci/scripts/uat/verify-golden-sig.sh
+
+      # Reconstruct the deploy-dir layout the golden was built with and MERGE IN the fresh app
+      # sysext at /var/lib/extensions/sentient-app.raw (offline, via debugfs). Full story in the
+      # script — this is the real production deploy mechanism, not an approximation.
+      - name: Reconstruct deploy dir + write app sysext into /var/lib/extensions/
+        run: .ci/scripts/uat/reconstruct-deploy-dir.sh
+
+      # Broker-bind-only e2e config (shared by BOTH boots, preflight-safe) + the mosquitto
+      # no-listener fix + the E2E-DIAG probe unit. The serial override is a SEPARATE, Robot-boot-only
+      # step below — see the script header for the run-1 watchdog regression that forced the split.
+      - name: Inject e2e broker-bind (shared, preflight-safe) + E2E-DIAG probe unit
+        run: .ci/scripts/uat/inject-e2e-config.sh
+
+      # PREFLIGHT — boot the golden-base-with-merged-sysext and prove (a) systemd-sysext MERGED the
+      # extension and (b) sentient-agent.service STARTED on top of it. Journal on failure.
+      - name: Preflight — sysext merged + sentient-agent.service started (journal on failure)
+        run: .ci/scripts/uat/preflight-boot.sh
+
+      # ROBOT-BOOT-ONLY serial override — runs AFTER preflight has passed (and torn down its
+      # snapshot boot). Applies only to the persistent rootfs the Robot boot reads; skipped while
+      # no distro/qemu/*.robot suites exist (#156).
+      - name: Inject Robot-boot-only serial override (ttyAMA1 + DeviceAllow) — after preflight
+        env:
+          # CONFIRMED by UAT run 1's E2E-DIAG (see the script's TODO). Change only if a poky bump
+          # renumbers it.
+          E2E_SERIAL_GUEST_DEV: /dev/ttyAMA1
+        run: .ci/scripts/uat/inject-robot-serial-override.sh
+
+      # The Seplos simulator that feeds the guest UART (test-kit seplos-tcp-sim) — same sim the Robot
+      # suites drive. Built from the sentient-builder toolchain the yocto builder inherits. Skipped
+      # (with a notice) until the #156 suites exist, so we don't pay a cold cargo build for nothing.
+      - name: Build Seplos sim
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! ls distro/qemu/*.robot >/dev/null 2>&1; then
+            echo "::notice::Seplos sim build skipped — no distro/qemu/*.robot suites yet (#156)."
+            exit 0
+          fi
+          cargo build --locked -p test-kit --bin seplos-tcp-sim --features tcp-sim
+          echo "SEPLOS_SIM_BIN=$PWD/target/debug/seplos-tcp-sim" >> "$GITHUB_ENV"
+
+      # Full Seplos->TMS->MQTT Robot e2e against the golden-base-with-merged-sysext. Skips WITH A NOTICE
+      # until the #156 suites (distro/qemu/*.robot) land — `robot` exits 252 ("no tests") on an empty
+      # suite dir, which would redden main; the preflight above stays the live agent gate meanwhile,
+      # and this step activates the moment a .robot suite appears (no workflow edit).
+      #
+      # OWNERSHIP DECISION (suite-boots vs uat-boots): the SUITE owns its own boot. The preflight
+      # above already killed its QEMU instance (no instance survives between steps in the same job —
+      # see YoctoQemuKeywords.py's own module docstring), so a second boot is required regardless of
+      # who triggers it. e2e_common.resource's "Standard Yocto E2e Setup" keyword already calls
+      # YoctoQemuKeywords.start_yocto_qemu + SeplosSimKeywords.start_seplos_sim +
+      # MqttKeywords.connect_external_subscriber internally, entirely from Robot — this is the
+      # LESS-fragile split: one process (robot) owns the whole boot-sim-assert-teardown lifecycle
+      # with its own bounded waits/retries, instead of splitting boot ownership across a bash step
+      # and the suite. Consequently this step does NOT start its own runqemu or seplos-tcp-sim — it
+      # only builds the sim binary (previous step) and lets the suite invoke it via
+      # SeplosSimKeywords' own subprocess management. The suite reads KAS_WORK_DIR from the
+      # ENVIRONMENT (Robot `%{KAS_WORK_DIR=./yocto}` default syntax in e2e_common.resource — NOT a
+      # `--variable`, which Robot does not expose as an env var to library code), so it is exported
+      # via the job env rather than passed via --variable.
+      #
+      # --variable flow: IMAGE_DIR + MACHINE are consumed by e2e_common.resource's Variables section
+      # (overriding its own repo-relative defaults) and forwarded into
+      # YoctoQemuKeywords.start_yocto_qemu by "Standard Yocto E2e Setup". SEPLOS_SIM_BIN is passed
+      # for parity/documentation only — e2e_common.resource's own comment on the Library import line
+      # explains SeplosSimKeywords.__init__ self-discovers ./target/debug/seplos-tcp-sim (exactly
+      # what "Build Seplos sim" above produces) and never reads this variable; kept so a future
+      # direct-Python caller has it available without a workflow edit.
+      - name: Run Robot e2e (Seplos -> TMS -> MQTT on the merged sysext app)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! ls distro/qemu/*.robot >/dev/null 2>&1; then
+            echo "::notice::Robot e2e skipped — no distro/qemu/*.robot suites yet (#156). Preflight remains the live UAT gate."
+            exit 0
+          fi
+          robot --outputdir uat-robot-results \
+            --output output.xml --report report.html --log log.html --xunit xunit.xml \
+            --variable IMAGE_DIR:"${GITHUB_WORKSPACE}/yocto/build/tmp/deploy/images/qemuarm64" \
+            --variable MACHINE:"qemuarm64" \
+            --variable SEPLOS_SIM_BIN:"${SEPLOS_SIM_BIN:-}" \
+            distro/qemu/
+
+      - name: Publish Robot e2e summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          XML="uat-robot-results/output.xml"
+          {
+            echo "## uat robot e2e (qemuarm64, merged sysext app) results"
+            echo
+            if [ -f "$XML" ]; then
+              python3 .ci/scripts/robot_output_to_summary.py "$XML"
+            else
+              echo "_no output.xml — Robot e2e skipped (#156) or failed before Robot ran; see preflight above_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Robot test-case report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: uat-robot-report-qemuarm64
+          path: uat-robot-results/**
+          if-no-files-found: ignore

@@ -1,0 +1,1062 @@
+{
+  "component-definition": {
+    "uuid": "29025242-aabf-4559-9114-68648f534610",
+    "metadata": {
+      "title": "sentient-rs TMS Component Definition — MIL-STD-3071 Catalog Mapping",
+      "last-modified": "2026-07-17T01:05:50Z",
+      "version": "1.0.0",
+      "oscal-version": "1.2.1",
+      "remarks": "Maps sentient-rs components (the descriptor-factory codegen tool, the bin-rpi runtime, the lib-schema wire types, the lib-mapping transform) to the compliance/oscal/catalog.json controls. Each implemented-requirement's `implementation-status` prop uses: implemented | partial | planned | alternative-implementation | not-applicable. Lula 1 is vendor-abandoned (not depended on); the `conftest-policy` link rel is this project's own convention for ‘which Rego policy machine-checks this requirement’, playing the role Lula's validation links played, without depending on Lula's schema.",
+      "parties": [
+        {
+          "uuid": "0d237ecc-a5f4-4c7b-a595-b124a02b1f23",
+          "type": "organization",
+          "name": "HVD / sentient-rs"
+        }
+      ]
+    },
+    "components": [
+      {
+        "uuid": "5476c154-652d-4a17-93f0-3841afb82935",
+        "type": "software",
+        "title": "tms-idl-codegen (MIL-STD-3071 descriptor factory)",
+        "description": "Host-only codegen tool, its own Cargo workspace (tools/tms-idl-codegen), excluded from the firmware/cargo-vet surface.",
+        "purpose": "Parses the checked-in MIL-STD-3071 IDL into the generated type/topic catalogue (lib-tms-model generated.rs) and emits docs/compliance/tms/tms-coverage.{json,md} as machine-readable provenance evidence — the input this conformance gate actually reads.",
+        "control-implementations": [
+          {
+            "uuid": "c7c98e29-714e-4906-ba88-60ba5f89718e",
+            "source": "../oscal/catalog.json",
+            "description": "Mapping of tms-idl-codegen (MIL-STD-3071 descriptor factory) to the MIL-STD-3071 topic conformance catalog.",
+            "implemented-requirements": [
+              {
+                "uuid": "0eb6431e-1b21-4255-bf43-e273ca603fb0",
+                "control-id": "tms-topic-heartbeat",
+                "description": "`Heartbeat` (idl_line 3672) is present in the generated type/topic catalogue with a `Heartbeat` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "addf6ab8-61c1-4044-95d4-06cb7d45705d",
+                "control-id": "tms-topic-device-info",
+                "description": "`DeviceInfo` (idl_line 5286) is present in the generated type/topic catalogue with a `DeviceInfo` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "c34095a2-bf4c-4aa2-91f9-1c14a11ff4ad",
+                "control-id": "tms-topic-active-diagnostic-state",
+                "description": "`ActiveDiagnosticState` (idl_line 3215) is present in the generated type/topic catalogue with a `ActiveDiagnosticState` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "cd9ddc16-6cbf-48e4-a1e5-e3810cf3499a",
+                "control-id": "tms-topic-active-microgrid-controller-state",
+                "description": "`ActiveMicrogridControllerState` (idl_line 4539) is present in the generated type/topic catalogue with a `ActiveMicrogridControllerState` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "18bccceb-e2b2-40d7-991b-a9af11beb184",
+                "control-id": "tms-topic-energy-start-stop-state",
+                "description": "`EnergyStartStopState` (idl_line 4476) is present in the generated type/topic catalogue with a `EnergyStartStopState` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "d1459e28-6add-43bb-beb1-ab74e47f3142",
+                "control-id": "tms-topic-power-port-state",
+                "description": "`PowerPortState` (idl_line 3567) is present in the generated type/topic catalogue with a `PowerPortState` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "e3f60678-1f53-4ac0-9e89-2ffeeffac6a7",
+                "control-id": "tms-topic-reply",
+                "description": "`Reply` (idl_line 4393) is present in the generated type/topic catalogue with a `Reply` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "cf4fac50-8834-4d8f-a694-e7fcc7cb1bdb",
+                "control-id": "tms-topic-storage-update",
+                "description": "`StorageUpdate` (idl_line 5113) is present in the generated type/topic catalogue with a `StorageUpdate` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "96243e87-d624-45ea-a565-c730a28b276a",
+                "control-id": "tms-topic-ac-load-sharing-state",
+                "description": "`tms::ac::AcLoadSharingState` (idl_line 4853) is present in the generated type/topic catalogue with a `AcLoadSharingState` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "b6675478-b969-4b24-b82d-177fbd1a1d2f",
+                "control-id": "tms-topic-ac-measurement-update",
+                "description": "`tms::ac::AcMeasurementUpdate` (idl_line 4697) is present in the generated type/topic catalogue with a `AcMeasurementUpdate` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "8b7f0f1b-8d12-40d7-b235-5322a54ff9e8",
+                "control-id": "tms-topic-ac-summary-measurement-update",
+                "description": "`tms::ac::AcSummaryMeasurementUpdate` (idl_line 4697) is present in the generated type/topic catalogue with a `AcSummaryMeasurementUpdate` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "caf7c683-e51c-44a6-9aa1-fca150e33996",
+                "control-id": "tms-topic-authorization-to-energize-reply",
+                "description": "`AuthorizationToEnergizeReply` (idl_line 3356) is present in the generated type/topic catalogue with a `AuthorizationToEnergizeReply` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "38f0d34a-c221-4d14-9281-6e90de65bd42",
+                "control-id": "tms-topic-control-parameter-state",
+                "description": "`ControlParameterState` (idl_line 3539) is present in the generated type/topic catalogue with a `ControlParameterState` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "6d139f8a-982a-4955-a600-89fce561f6cf",
+                "control-id": "tms-topic-dc-load-sharing-state",
+                "description": "`tms::dc::DcLoadSharingState` (idl_line 5084) is present in the generated type/topic catalogue with a `DcLoadSharingState` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "9e7bde31-4170-4985-95a2-d86ae44c4f05",
+                "control-id": "tms-topic-dc-measurement-update",
+                "description": "`tms::dc::DcMeasurementUpdate` (idl_line 4963) is present in the generated type/topic catalogue with a `DcMeasurementUpdate` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "39567805-0147-4d9c-b9b1-523f11f6c516",
+                "control-id": "tms-topic-dc-summary-measurement-update",
+                "description": "`tms::dc::DcSummaryMeasurementUpdate` (idl_line 4963) is present in the generated type/topic catalogue with a `DcSummaryMeasurementUpdate` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "0d747b39-a5ec-4595-b9e9-01b7c06d9cc9",
+                "control-id": "tms-topic-grounding-circuit-state",
+                "description": "`GroundingCircuitState` (idl_line 2914) is present in the generated type/topic catalogue with a `GroundingCircuitState` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "c6297c41-21ee-4a7b-925c-d02a67d687cb",
+                "control-id": "tms-topic-identity-nickname-state",
+                "description": "`IdentityNicknameState` (idl_line 3605) is present in the generated type/topic catalogue with a `IdentityNicknameState` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              },
+              {
+                "uuid": "4b463b77-69cf-421b-887f-e076eefd87a4",
+                "control-id": "tms-topic-operator-intent-state",
+                "description": "`OperatorIntentState` (idl_line 3927) is present in the generated type/topic catalogue with a `OperatorIntentState` topic binding — confirmed by docs/compliance/tms/tms-coverage.json.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../policy/topic_coverage.rego",
+                    "rel": "conftest-policy",
+                    "text": "conftest/OPA policy asserting this topic has a type binding in tms-coverage.json"
+                  },
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.json",
+                    "rel": "evidence",
+                    "text": "generated coverage evidence"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "uuid": "0c3ea0d8-09fb-48e9-9029-137094b7354a",
+        "type": "software",
+        "title": "bin-rpi (Raspberry Pi adapter binary)",
+        "description": "Runtime publish/subscribe wiring status per topic, cross-checked by grep against crates/bin/rpi, crates/impl-app, crates/lib-mapping this pass (read-only; the Rust workstream owns these files, not this compliance workstream).",
+        "purpose": "The shipping std/tokio binary that actually publishes/subscribes TMS topics over the embedded MQTT broker — runtime publish-wiring, not just type shape.",
+        "control-implementations": [
+          {
+            "uuid": "18133ff1-2554-4e16-8de1-4118c55dfdf9",
+            "source": "../oscal/catalog.json",
+            "description": "Mapping of bin-rpi (Raspberry Pi adapter binary) to the MIL-STD-3071 topic conformance catalog.",
+            "implemented-requirements": [
+              {
+                "uuid": "9e58f346-1fa8-4f33-9352-bb95a633f3af",
+                "control-id": "tms-topic-heartbeat",
+                "description": "Published every 1 s per identity (bin-rpi::tasks::heartbeat).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "94280fd9-774f-4de5-a70d-1ad884a62209",
+                "control-id": "tms-topic-device-info",
+                "description": "Published at start-up + 60 s republish (not true TRANSIENT_LOCAL retain — the embedded broker's LinkTx has no retain flag).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "partial"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "eb69984f-c85c-4f45-af6a-d8e02182fda8",
+                "control-id": "tms-topic-active-diagnostic-state",
+                "description": "Published periodically; spec's At-Start/On-Change + most-severe-first truncation posture not yet met (issue #265).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "partial"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "2a68be7b-cd0f-46fa-966d-623448fa3337",
+                "control-id": "tms-topic-active-microgrid-controller-state",
+                "description": "Wired at runtime — per-identity ActiveMicrogridControllerState publisher (crates/bin/rpi/src/tasks/state_publisher.rs) fed by the A.7.5 MC-selection machine (crates/bin/rpi/src/tasks/mc_select.rs); On-Change + At-Start; issues #263/#264 closed.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "3abea834-feb0-43ac-b6c1-bbec27e25526",
+                "control-id": "tms-topic-energy-start-stop-state",
+                "description": "Wired at runtime — per-identity state_publisher (crates/bin/rpi/src/tasks/state_publisher.rs), retained + QoS1, At-Start + On-Change; honest OPERATIONAL-proxy content (PROVISIONAL); issue #263 closed.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "c8fc22fa-3312-4371-9fa0-af3691c17787",
+                "control-id": "tms-topic-power-port-state",
+                "description": "Wired at runtime — per-identity state_publisher (crates/bin/rpi/src/tasks/state_publisher.rs), one PowerPortStatus per declared port, CS_UNKNOWN cable status (PROVISIONAL); issue #263 closed.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "d7763dd1-24f9-4d8e-8048-3264db2d53a5",
+                "control-id": "tms-topic-reply",
+                "description": "Published within 0.1 s budget via a loopback rumqttc client; QoS0, not the spec's Reliable/history-128 Reply profile (issue #265).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "partial"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "d5ac22b2-6695-4fe8-a6ed-d8a6f28d4c19",
+                "control-id": "tms-topic-storage-update",
+                "description": "Published every ~2 s poll cycle against a Slow/10 s profile (issue #265).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "partial"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "8096eee8-0595-465c-88b3-cd882d10300e",
+                "control-id": "tms-topic-ac-load-sharing-state",
+                "description": "No publisher call site (grep: 0 hits this pass).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "planned"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "a7157a8c-0e9a-4d85-a3c3-2f367a42552d",
+                "control-id": "tms-topic-ac-measurement-update",
+                "description": "Published by the CONV (inverter) identity; PROVISIONAL port-assignment/derivation mapping pending a real Voltronic capture (decision 0001 open risk).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "2cf76c71-2f34-408b-ae2a-c703f86b00ab",
+                "control-id": "tms-topic-ac-summary-measurement-update",
+                "description": "No publisher call site (grep: 0 hits this pass).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "planned"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "2a5ee964-3235-4ed4-9f54-c6dbef64692c",
+                "control-id": "tms-topic-authorization-to-energize-reply",
+                "description": "No publisher call site (grep: 0 hits this pass).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "planned"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "1985af93-6b62-428a-bb48-79f2fac3b11f",
+                "control-id": "tms-topic-control-parameter-state",
+                "description": "No publisher call site (grep: 0 hits this pass).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "planned"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "011ed3b5-7ed7-4db6-86da-e09219e7bc19",
+                "control-id": "tms-topic-dc-load-sharing-state",
+                "description": "Wired at runtime — per-identity state_publisher (crates/bin/rpi/src/tasks/state_publisher.rs), empty parameters (non-load-sharing battery); HAS DC PORTS condition met; issue #263 closed.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "20a597eb-59b0-4456-8ccb-e92b43c34d18",
+                "control-id": "tms-topic-dc-measurement-update",
+                "description": "Published by both STOR and CONV identities; Medium/1 s nominal not met by the 2 s default poll interval (issue #265).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "partial"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "57b10aec-6c08-4e9d-871b-2cf60724ad3f",
+                "control-id": "tms-topic-dc-summary-measurement-update",
+                "description": "No publisher call site (grep: 0 hits this pass).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "planned"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "cdfb5d0f-2c3e-4db4-bf2b-2ab269e23bf1",
+                "control-id": "tms-topic-grounding-circuit-state",
+                "description": "No publisher call site (grep: 0 hits this pass).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "planned"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "90ba798b-d86e-4d5b-ba38-469f96228805",
+                "control-id": "tms-topic-identity-nickname-state",
+                "description": "No publisher call site (grep: 0 hits this pass).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "planned"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "9065a940-d791-42a5-8f1a-a6734989442b",
+                "control-id": "tms-topic-operator-intent-state",
+                "description": "No publisher call site (grep: 0 hits this pass).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "planned"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "docs/tms-compliance.md §3 topic inventory (human-reviewed, not machine-checked by this gate)"
+                  }
+                ]
+              },
+              {
+                "uuid": "94c6a85e-cbcc-4166-bc78-642e1089924a",
+                "control-id": "tms-xc-transport-binding",
+                "description": "MQTT+JSON, not DDS/XCDR2/RTPS — documented adaptation (docs/tms-compliance.md §7.1).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "alternative-implementation"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "§7.1 transport adaptation"
+                  }
+                ]
+              },
+              {
+                "uuid": "148db709-a6f7-4e8d-9891-b40cc0269dc8",
+                "control-id": "tms-xc-qos-profile",
+                "description": "QoS0/QoS1 approximate the 8 DDS profiles; PowerHardwareUpdate/StorageUpdate/Reply/DeviceInfo cadence or reliability deviations tracked in docs/tms-compliance.md §9 (issue #265).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "partial"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "§9 open spec-conformance items"
+                  }
+                ]
+              },
+              {
+                "uuid": "c733deed-8042-48b6-bb33-cc7bd05ea98b",
+                "control-id": "tms-xc-timing-deadline",
+                "description": "Rate-limiting / publish-cadence enforcement not yet implemented for the Slow (10 s) profile topics (issue #265).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "partial"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "§9 open spec-conformance items"
+                  }
+                ]
+              },
+              {
+                "uuid": "0f0f6885-7dfc-4bc6-90d6-85b272bd5a39",
+                "control-id": "tms-xc-topicinfo-declaration",
+                "description": "TopicInfo.supportedRequestTopics is declared empty (honest — no command surface); the two named request topics additionally subscribed as defense-in-depth answer REPLY_NOT_IMPLEMENTED, never a fabricated Ok (decision 0003 supersession).",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/decisions/0003-tms-device-role-stor.md",
+                    "rel": "evidence",
+                    "text": "decision 0003 supersession (Reply/Request posture)"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "uuid": "93c53583-c292-4dd9-bbd0-1a9b15a03c99",
+        "type": "software",
+        "title": "lib-schema (TMS wire type definitions)",
+        "description": "Schema-shape layer only — no transport, no runtime wiring.",
+        "purpose": "Hand-authored + descriptor-factory-verified Rust structs/enums mirroring the IDL field shape, @key/@optional/@range/@unit annotations.",
+        "control-implementations": [
+          {
+            "uuid": "c39afbb8-dcaf-48e4-af1f-af7726b625be",
+            "source": "../oscal/catalog.json",
+            "description": "Mapping of lib-schema (TMS wire type definitions) to the MIL-STD-3071 topic conformance catalog.",
+            "implemented-requirements": [
+              {
+                "uuid": "7e4322ca-61b0-4ac3-96e2-cf2e1943ec9a",
+                "control-id": "tms-xc-key-values",
+                "description": "Every IDL @key field is a distinct Rust field; tms-coverage.json's per-type `keys` count is the machine-readable evidence.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.md",
+                    "rel": "evidence",
+                    "text": "tms-coverage.md ‘Types with units / ranges’ table (@key column)"
+                  }
+                ]
+              },
+              {
+                "uuid": "81843714-bb49-47c3-b87d-bb04cd8b1695",
+                "control-id": "tms-xc-bounded-values",
+                "description": "IDL @range/@min/@max annotations are captured in the generated catalogue (tms-coverage.json `ranges` count); runtime enforcement that populated values stay in-range is not independently machine-tested by this gate.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "partial"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.md",
+                    "rel": "evidence",
+                    "text": "tms-coverage.md ‘Types with units / ranges’ table (@range column)"
+                  }
+                ]
+              },
+              {
+                "uuid": "8558c371-6345-4c3e-9c02-5e2f82998cf1",
+                "control-id": "tms-xc-units-of-measure",
+                "description": "All @unit-annotated fields spot-checked correct against the IDL (p.u. SoC, degC, s, V/A/W, W/s); tms-coverage.json `units` count per type is the machine-readable evidence of annotation presence.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/compliance/tms/tms-coverage.md",
+                    "rel": "evidence",
+                    "text": "tms-coverage.md ‘Types with units / ranges’ table (@unit column)"
+                  }
+                ]
+              },
+              {
+                "uuid": "a5406f86-9706-46b6-806f-4c0d214262d2",
+                "control-id": "tms-xc-extensibility",
+                "description": "No DDS-XTypes wire exists in this project (JSON has no FINAL/APPENDABLE/MUTABLE byte); the analogous concern (additive-only field evolution) is tracked informally, not machine-checked.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "not-applicable"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "§7.1 transport adaptation"
+                  }
+                ]
+              },
+              {
+                "uuid": "8bff66a2-4520-4d34-adfc-a5a073d26606",
+                "control-id": "tms-xc-value-representation",
+                "description": "NaN-for-unavailable and IDL enum wire spellings (#[serde(rename = \"IDL_SPELLING\")]) are implemented; DiagnosticTroubleCode.occurrenceCount is hardcoded 1 (no edge-triggered tracking) and severity is uniformly Major (over-signals lesser faults) — documented simplifications, not regressions.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "partial"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "§7.4, §8(e)"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "uuid": "6313f644-84da-441b-b851-8a27e6913a02",
+        "type": "software",
+        "title": "lib-mapping (Seplos/Voltronic canonical → TMS transform)",
+        "description": "Value-derivation + topic-naming layer.",
+        "purpose": "Maps CanonicalReading/CanonicalInverterReading onto TMS struct instances and builds MQTT topic strings.",
+        "control-implementations": [
+          {
+            "uuid": "2cef3242-16d5-4007-b3ab-36843fd52533",
+            "source": "../oscal/catalog.json",
+            "description": "Mapping of lib-mapping (Seplos/Voltronic canonical → TMS transform) to the MIL-STD-3071 topic conformance catalog.",
+            "implemented-requirements": [
+              {
+                "uuid": "e44fef3b-ebae-4d05-a44f-abf345e831f0",
+                "control-id": "tms-xc-topic-naming",
+                "description": "`sink.rs::topic_into` builds `tms/{device_id}/{snake_slug}` from the CamelCase TMS type name — a documented, reversible bridge rule.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "§6 topic name / transport mapping"
+                  }
+                ]
+              },
+              {
+                "uuid": "a8b3143a-cfa4-4c20-89b3-6b0546dca1b5",
+                "control-id": "tms-xc-value-representation",
+                "description": "Sign inversion (Seplos charge-positive -> TMS source-positive) and unit scaling (centi-volts/-amps, millivolts, deci-Kelvin, deci-percent) are documented, load-bearing conventions at transform.rs's call sites.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "../../docs/tms-compliance.md",
+                    "rel": "evidence",
+                    "text": "§5 source mapping and deviations"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

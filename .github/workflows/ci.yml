@@ -1,0 +1,238 @@
+name: CI
+
+# PR gate, staged: fmt + clippy run FIRST and gate everything else, so a formatting or lint
+# error fails fast before the heavier test + feature-matrix jobs run. Infra mirrors the release
+# build (arc-runner-set + rust:latest reaching the kellnr crate mirror via .cargo/config.toml).
+#
+# PR-ONLY (no `push: main`): the PR already ran this whole suite, so re-running it on the merge
+# commit is pure duplicate build cost. Post-merge validation on main is uat.yml's job (build the
+# binary, boot it on the golden image, preflight). Branch protection evaluates these checks on the
+# pull_request event, so dropping the push trigger doesn't weaken the gate.
+#
+# This file is a thin orchestrator: each job below imports a reusable workflow (`_*.yml`) that
+# owns the actual steps, so `needs:` gating still works across the split (GitHub Actions `needs:`
+# only resolves within one triggering workflow file — reusable-workflow jobs are still jobs of
+# THIS workflow, so the graph holds). See .github/workflows/_lint.yml, _test.yml, _supply-chain.yml,
+# _quality.yml, and the composite .github/actions/setup for the shared sccache wiring.
+#
+# Cross-job compile reuse: every compiling lane shares ONE sccache on the NFS mount (/ci-cache),
+# so identical rustc units hit across jobs, runs, and nodes (~97% hit rate warm). Stage 1 cannot
+# seed stage 2's object code, by construction: fmt compiles nothing and clippy builds check-mode
+# (--emit=metadata) units under clippy-driver — a different artifact class from the --emit=link
+# units test/build lanes need. On a fresh commit the stage-2 lanes therefore each compile the
+# CHANGED crates once (concurrent misses race; deps still hit), and every later run hits.
+
+on:
+  pull_request:
+    branches: [main]
+
+# Cancel a superseded run on the same ref (e.g. a new push to the same PR) — the PR entry gate is
+# the highest-traffic workflow, so this saves the most redundant-run cost of any lane here.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  # --- Stage 1: format + lint (the gate) -----------------------------------------------------
+  lint:
+    name: fmt · clippy
+    uses: ./.github/workflows/_lint.yml
+    secrets: inherit
+
+  # --- Stage 1 (parallel): Helm chart lint + render for the viz stack (deploy/charts/sentient-viz).
+  # Independent of the Rust gate; seconds. arc-dind because arc-runner-set forbids bare jobs and
+  # this needs nothing but curl + helm (pinned, checksum-verified, into RUNNER_TEMP — non-root runner).
+  viz-lint:
+    name: viz chart lint · render
+    runs-on: arc-dind
+    timeout-minutes: 10
+    env:
+      HELM_VERSION: v3.17.0
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install pinned helm
+        uses: ./.github/actions/setup-k8s-tools
+        with:
+          helm-version: ${{ env.HELM_VERSION }}
+      - name: Lint + render (default, netpol, retention, no-PVC variants)
+        run: |
+          set -euo pipefail
+          HELM="$RUNNER_TEMP/helm"
+          "$HELM" lint deploy/charts/sentient-viz
+          "$HELM" template sentient-viz deploy/charts/sentient-viz > /dev/null
+          "$HELM" template sentient-viz deploy/charts/sentient-viz --set networkPolicy.enabled=true > /dev/null
+          "$HELM" template sentient-viz deploy/charts/sentient-viz --set influxdb.retention=30d > /dev/null
+          "$HELM" template sentient-viz deploy/charts/sentient-viz --set influxdb.persistence.enabled=false > /dev/null
+          echo "chart renders clean in all four variants" >> "$GITHUB_STEP_SUMMARY"
+
+  # --- Stage 2: logic tests — host suite + acceptance + no_std build + e2e (after the lint gate) --
+  test:
+    name: logic tests
+    needs: [lint]
+    uses: ./.github/workflows/_test.yml
+    secrets: inherit
+
+  # --- Security-seam FIPS x TrustZone feature/tier matrix — its own branch off the lint gate ------
+  security:
+    name: security matrix
+    needs: [lint]
+    uses: ./.github/workflows/_security.yml
+    secrets: inherit
+
+  # --- DDS/RTPS interop e2e (story #321 WP7, #325) — its own branch off the lint gate, sibling to
+  # `test` rather than folded into it: a real domain-0 IPv6/RTPS participant is a different flake
+  # class than the pty/broker `test-e2e` lane, so it reads as its own PR check. ---------------------
+  dds-interop:
+    name: dds-interop
+    needs: [lint]
+    uses: ./.github/workflows/_dds_interop.yml
+    secrets: inherit
+
+  # --- Stage 1: supply-chain + workflow-audit (parallel to lint's downstream — gated on lint,
+  # but a failure here must not mask test results, so it does not `needs: test`) ---------------
+  supply-chain:
+    name: supply-chain · workflow-audit
+    needs: [lint]
+    uses: ./.github/workflows/_supply-chain.yml
+    secrets: inherit
+
+  # --- Coverage, semver-checks, MSRV (after the lint gate) ------------------------------------
+  quality:
+    name: coverage · semver · msrv
+    needs: [lint]
+    uses: ./.github/workflows/_quality.yml
+    secrets: inherit
+
+  # --- Bare-name status gates -----------------------------------------------------------------
+  # The `main` branch ruleset requires the WORKFLOW-level context names (`logic tests`,
+  # `security matrix`, `supply-chain · workflow-audit`, `coverage · semver · msrv`). But a
+  # reusable-workflow caller job (`test`/`security`/`supply-chain`/`quality` above) only ever emits
+  # `<name> / <inner-job>` check-runs — GitHub never publishes the bare caller name as its own
+  # check-run, so those required contexts read "not reported" forever and block every PR. We CANNOT
+  # rename the callers to fix this: the ruleset ALSO requires the full sub-names (e.g.
+  # `coverage · semver · msrv / MSRV (1.91)`), which are derived from those same `name:`s.
+  # These tiny aggregation jobs re-emit the bare context (named exactly as the ruleset expects),
+  # succeeding ONLY if the corresponding reusable lane succeeded — so the required checks become
+  # satisfiable without weakening any gate. `if: always()` makes each report a definitive pass/fail
+  # (not "skipped") so a required check is never left perpetually pending.
+  logic-tests-gate:
+    name: logic tests
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on the logic-tests lane
+        run: |
+          r='${{ needs.test.result }}'; echo "logic tests lane = $r"
+          [ "$r" = success ] || exit 1
+  security-gate:
+    name: security matrix
+    needs: [security]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on the security-matrix lane
+        run: |
+          r='${{ needs.security.result }}'; echo "security matrix lane = $r"
+          [ "$r" = success ] || exit 1
+  supply-chain-gate:
+    name: supply-chain · workflow-audit
+    needs: [supply-chain]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on the supply-chain lane
+        run: |
+          r='${{ needs['supply-chain'].result }}'; echo "supply-chain lane = $r"
+          [ "$r" = success ] || exit 1
+  quality-gate:
+    name: coverage · semver · msrv
+    needs: [quality]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on the coverage/semver/msrv lane
+        run: |
+          r='${{ needs.quality.result }}'; echo "coverage · semver · msrv lane = $r"
+          [ "$r" = success ] || exit 1
+
+  # NOTE: the Renode MCU boot-smoke has been REMOVED from the PR gate. `_emulation.yml` is retained
+  # but its ONLY invoker is production.yml's `mcu-boot-smoke` job, which is currently disabled
+  # (`if: false`, pending #191 — a west topdir bug). It is NOT driven by uat.yml (the Pi UAT gate
+  # covers a different product; see production.yml's mcu-boot-smoke job comment) and is not invoked
+  # from ci.yml.
+
+  # --- Publish per-test-case Checks on a GITHUB-HOSTED runner (dorny/test-reporter, a Node action,
+  # fails under ARC's Kubernetes container hook: "Executing the custom container implementation
+  # failed"). The ARC container jobs UPLOAD their junit/xunit; these hosted jobs download + publish.
+  # Each depends ONLY on its own producer, so the test-e2e Check lands as soon as `test` finishes —
+  # NOT gated behind the slow emulation stage. checks:write is scoped per job; the in-lane
+  # $GITHUB_STEP_SUMMARY tables already ran on the ARC side.
+  #
+  # dorny/test-reporter shells out to `git ls-files` to resolve annotation file paths, so it
+  # REQUIRES a checkout — without one it fails immediately with "fatal: not a git repository".
+  # That failure was previously masked by `continue-on-error: true` (+ the action's own
+  # `fail-on-error: false`), so these jobs showed green on every run while NEVER actually
+  # publishing a Check — a silent no-op 100% of the time. Fixed by checking out the repo and
+  # letting the step fail for real if the reporter errors.
+  publish-test-report:
+    name: publish test-e2e report
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false  # dorny only needs files for `git ls-files`; don't persist the token (zizmor artipacked)
+      - name: Download test-e2e junit
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: junit-test-e2e
+          path: reports
+      - name: Publish test-e2e check
+        if: always()
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
+        with:
+          name: test-e2e (nextest)
+          path: reports/**/junit.xml
+          reporter: java-junit
+          fail-on-error: true
+
+  # Same pattern as `publish-test-report` above, scoped to the `dds-interop` lane's own junit — see
+  # that job's comment for why this needs a GitHub-hosted (non-ARC) runner.
+  publish-dds-interop-report:
+    name: publish dds-interop report
+    needs: [dds-interop]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Download dds-interop junit
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: junit-dds-interop
+          path: reports-dds-interop
+      - name: Publish dds-interop check
+        if: always()
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
+        with:
+          name: dds-interop (nextest)
+          path: reports-dds-interop/**/junit.xml
+          reporter: java-junit
+          fail-on-error: true

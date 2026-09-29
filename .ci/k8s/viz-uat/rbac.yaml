@@ -1,0 +1,84 @@
+# RBAC for the viz-stack UAT lane: one CI identity, `viz-uat-deployer`, scoped to the viz-uat
+# namespace only (it can NOT create namespaces — the namespace is part of this one-time bring-up,
+# which is exactly why the lane installs with a fixed ns instead of a per-run one).
+#
+# The Role is namespace-admin over the resource kinds the chart + assertions actually use:
+# helm release Secrets, ConfigMaps/Services/Deployments, the optional PVC + NetworkPolicies,
+# pods get/list/watch for `helm --wait`, and pods/exec for the sim fault injection.
+# Its long-lived token is minted by setup-deployer-kubeconfig.sh and stored as the
+# VIZ_UAT_KUBECONFIG GitHub secret (absent secret = the lane skips gracefully).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: viz-uat-deployer
+  namespace: viz-uat
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: viz-uat-deployer
+  namespace: viz-uat
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps", "services", "persistentvolumeclaims", "serviceaccounts"]
+    verbs: ["*"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["*"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: viz-uat-deployer
+  namespace: viz-uat
+subjects:
+  - kind: ServiceAccount
+    name: viz-uat-deployer
+    namespace: viz-uat
+roleRef:
+  kind: Role
+  name: viz-uat-deployer
+  apiGroup: rbac.authorization.k8s.io
+---
+# Tailnet exposure (chart value tailscale.enabled): the grafana POD's ServiceAccount
+# (`sentient-viz-tailscale`, chart-created) persists the sidecar's node state in the
+# `sentient-viz-tailscale-state` Secret. The deployer SA cannot create RBAC objects (and k8s
+# escalation-prevention would bite anyway), so this admin-applied bring-up carries the pod-side
+# Role/RoleBinding — the CI lane installs with `tailscale.rbac.create=false`. Same shape as
+# .ci/k8s/docs/rbac.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sentient-viz-tailscale-state
+  namespace: viz-uat
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["sentient-viz-tailscale-state"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sentient-viz-tailscale-state
+  namespace: viz-uat
+subjects:
+  - kind: ServiceAccount
+    name: sentient-viz-tailscale
+    namespace: viz-uat
+roleRef:
+  kind: Role
+  name: sentient-viz-tailscale-state
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,7 @@
+# Normalize line endings to LF in the repo (Linux CI + reproducible builds); tools decide the
+# working-tree ending on checkout. Prevents Windows CRLF from entering the tree and tripping the
+# `cargo fmt --check` gate.
+* text=auto eol=lf
+
+# Shell scripts must stay LF (they run on the RPi / in Linux containers).
+*.sh text eol=lf
