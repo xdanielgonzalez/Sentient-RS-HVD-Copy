@@ -92,7 +92,7 @@ jobs:
           # bundle FILE still loads, so ghcr's public roots keep working). Go reads every file in the
           # dir and skips non-PEM, so pointing at ci/ (which holds harbor-ca.crt) is safe.
           SSL_CERT_DIR: /etc/ssl/certs:${{ github.workspace }}/.ci
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: .ci/Dockerfile
@@ -154,7 +154,7 @@ jobs:
         env:
           # Client-side Harbor CA trust for buildctl's token fetch (see base job).
           SSL_CERT_DIR: /etc/ssl/certs:${{ github.workspace }}/.ci
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.file }}
