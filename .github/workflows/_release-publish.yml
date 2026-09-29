@@ -161,7 +161,7 @@ jobs:
         # continue-on-error + the hard Verify step after it are the safety net so a transient upload
         # race can't red a genuinely-complete release, while a genuinely-incomplete one still fails.
         continue-on-error: true
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           # A workflow_dispatch run's github.ref is a BRANCH (refs/heads/main), not a tag, so the
           # action has nothing to attach the release to ("GitHub Releases requires a tag"). Give it
