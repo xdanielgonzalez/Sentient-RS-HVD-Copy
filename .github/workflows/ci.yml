@@ -201,7 +201,7 @@ jobs:
           path: reports
       - name: Publish test-e2e check
         if: always()
-        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
+        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
         with:
           name: test-e2e (nextest)
           path: reports/**/junit.xml
@@ -230,7 +230,7 @@ jobs:
           path: reports-dds-interop
       - name: Publish dds-interop check
         if: always()
-        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
+        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
         with:
           name: dds-interop (nextest)
           path: reports-dds-interop/**/junit.xml
